@@ -2,6 +2,7 @@
 
 let
   terminal = config.local.apps.terminal;
+  layout = builtins.toJSON osConfig.local.keyboardLayout;
 in
 {
   wayland.windowManager.hyprland = {
@@ -11,32 +12,29 @@ in
     systemd.enable = false; # no systemd user session on finix
     configType = "lua";
 
-    settings = {
-      "$mod" = "SUPER";
+    extraConfig = ''
+      local mod = "SUPER"
 
-      monitor = lib.mkDefault [ ", preferred, auto, 1" ];
+      hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 
-      input.kb_layout = osConfig.local.keyboardLayout;
+      hl.config({
+        input = { kb_layout = ${layout} },
+        ${lib.optionalString osConfig.local.display.softwareCursor
+          "cursor = { no_hardware_cursors = true },"}
+      })
 
-      bind =
-        lib.optional (terminal != null) "$mod, Return, exec, ${terminal}"
-        ++ [
-          "CTRL, D, killactive"
-          "$mod SHIFT, E, exit"
+      ${lib.optionalString (terminal != null)
+        ''hl.bind(mod .. " + RETURN", hl.dsp.exec_cmd(${builtins.toJSON terminal}))''}
+      hl.bind("CTRL + D", hl.dsp.window.close())
+      hl.bind(mod .. " + SHIFT + E", hl.dsp.exit())
 
-          "$mod, left, movefocus, l"
-          "$mod, right, movefocus, r"
-          "$mod, up, movefocus, u"
-          "$mod, down, movefocus, d"
-        ];
+      hl.bind(mod .. " + left",  hl.dsp.focus({ direction = "left" }))
+      hl.bind(mod .. " + right", hl.dsp.focus({ direction = "right" }))
+      hl.bind(mod .. " + up",    hl.dsp.focus({ direction = "up" }))
+      hl.bind(mod .. " + down",  hl.dsp.focus({ direction = "down" }))
 
-      bindm = [
-        "$mod, mouse:272, movewindow"
-        "$mod, mouse:273, resizewindow"
-      ];
-    }
-    // lib.optionalAttrs osConfig.local.display.softwareCursor {
-      cursor.no_hardware_cursors = 1;
-    };
+      hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
+      hl.bind(mod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
+    '';
   };
 }
