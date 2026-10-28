@@ -25,7 +25,7 @@ in
 
       ${lib.optionalString (terminal != null)
         ''hl.bind(mod .. " + RETURN", hl.dsp.exec_cmd(${builtins.toJSON terminal}))''}
-      hl.bind("CTRL + D", hl.dsp.window.close())
+      hl.bind("ALT + F4", hl.dsp.window.close())
       hl.bind(mod .. " + SHIFT + E", hl.dsp.exit())
 
       hl.bind(mod .. " + left",  hl.dsp.focus({ direction = "left" }))
