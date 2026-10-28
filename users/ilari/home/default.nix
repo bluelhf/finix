@@ -9,6 +9,7 @@
     ./browser.nix
     ./hyprland.nix
     ./launcher.nix
+    ./nix-tools.nix
   ];
 
   home.username = "ilari";
