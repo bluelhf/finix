@@ -2,6 +2,7 @@
 
 let
   terminal = config.local.apps.terminal;
+  launcher = config.local.apps.launcher;
   layout = builtins.toJSON osConfig.local.keyboardLayout;
 in
 {
@@ -25,6 +26,10 @@ in
 
       ${lib.optionalString (terminal != null)
         ''hl.bind(mod .. " + RETURN", hl.dsp.exec_cmd(${builtins.toJSON terminal}))''}
+
+      ${lib.optionalString (launcher != null)
+        ''hl.bind(mod .. " + 7", hl.dsp.exec_cmd(${builtins.toJSON launcher}))''}
+
       hl.bind("ALT + F4", hl.dsp.window.close())
       hl.bind(mod .. " + SHIFT + E", hl.dsp.exit())
 
