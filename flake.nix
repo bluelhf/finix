@@ -10,11 +10,11 @@
   outputs =
     inputs@{ self, nixpkgs, finix, ... }:
     let
-      system = "x86_64-linux";
-      pkgs = import nixpkgs { inherit system; };
-
       mkHost =
-        hostDir:
+        { dir, system }:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
         finix.lib.finixSystem {
           inherit (pkgs) lib;
 
@@ -26,11 +26,16 @@
           modules = [
             { nixpkgs.pkgs = pkgs; }
             ./contract/system.nix
-            hostDir
+            dir
           ];
         };
     in
     {
-      nixosConfigurations.qemulaattori = mkHost ./hosts/qemulaattori;
+      nixosConfigurations = {
+        qemulaattori = mkHost {
+          dir = ./hosts/qemulaattori;
+          system = "x86_64-linux";
+        };
+      };
     };
 }
