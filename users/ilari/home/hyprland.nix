@@ -9,7 +9,7 @@ in
     package = null;
     portalPackage = null;
     systemd.enable = false; # no systemd user session on finix
-    configType = "hyprlang";
+    configType = "lua";
 
     settings = {
       "$mod" = "SUPER";
