@@ -6,7 +6,7 @@
   programs.fastfetch.enable = true;
 
   environment.systemPackages = with pkgs; [
-    nano curl wget
+    nano curl wget openssh
     git iputils iproute2
     nixos-rebuild-ng
   ];
