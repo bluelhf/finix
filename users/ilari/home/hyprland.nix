@@ -5,6 +5,14 @@ let
   launcher = config.local.apps.launcher;
   screenshot = config.local.apps.screenshot;
   layout = builtins.toJSON osConfig.local.keyboardLayout;
+  audio = lib.attrByPath [ "programs" "wireplumber" "enable" ] false osConfig;
+  audioStart = pkgs.writeShellScript "audio-start" ''
+    ${osConfig.programs.pipewire.package}/bin/pipewire &
+    sleep 0.5
+    ${osConfig.programs.wireplumber.package}/bin/wireplumber &
+    sleep 0.5
+    exec ${osConfig.programs.pipewire.package}/bin/pipewire-pulse
+  '';
 in
 {
   wayland.windowManager.hyprland = {
@@ -66,6 +74,7 @@ in
 
       hl.on("hyprland.start", function()
         hl.exec_cmd("${lib.getExe pkgs.hyprshell} run")
+        ${lib.optionalString audio ''hl.exec_cmd(${builtins.toJSON "${audioStart}"})''}
       end)
 
       hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })

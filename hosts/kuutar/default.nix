@@ -12,6 +12,7 @@
     ../../profiles/boot.nix
     ../../profiles/network.nix
     ../../profiles/bluetooth.nix
+    ../../profiles/audio.nix
     ../../profiles/console.nix
     ../../profiles/fonts.nix
     ../../profiles/desktop.nix
