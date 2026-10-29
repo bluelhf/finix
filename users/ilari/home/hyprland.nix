@@ -55,6 +55,8 @@ in
       hl.bind(mod .. " + SHIFT + right", move_tag(1))
       hl.bind(mod .. " + SHIFT + left",  move_tag(-1))
 
+      hl.bind(mod .. " + SHIFT + space", hl.dsp.window.float({ action = "toggle" }))
+
       hl.on("hyprland.start", function()
         hl.exec_cmd("${lib.getExe pkgs.hyprshell} run")
       end)
