@@ -19,6 +19,7 @@
     sysklogd.enable = true;
     polkit.enable = true;
     dbus.enable = true;
-    mdevd.enable = true;
+    udev.enable = true;
+    elogind.enable = true;
   };
 }

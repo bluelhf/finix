@@ -29,6 +29,5 @@
     "wheel"
     "video"
     "input"
-    config.services.seatd.group
   ];
 }

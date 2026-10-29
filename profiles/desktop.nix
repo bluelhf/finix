@@ -5,7 +5,6 @@
 
   programs.hyprland.enable = true;
   hardware.graphics.enable = true;
-  services.seatd.enable = true;
 
   xdg.icons.enable = true;
   environment.pathsToLink = [ "/share/applications" ];
