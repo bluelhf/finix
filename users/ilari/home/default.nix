@@ -7,6 +7,7 @@
     ./shell.nix
     ./terminal.nix
     ./browser.nix
+    ./chat.nix
     ./hyprland.nix
     ./launcher.nix
     ./nix-tools.nix
