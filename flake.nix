@@ -17,7 +17,16 @@
       mkHost =
         { dir, system }:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs {
+            inherit system;
+            config.allowUnfreePredicate =
+              pkg:
+              builtins.elem (nixpkgs.lib.getName pkg) [
+                "intellij-idea"
+                "webstorm"
+                "rust-rover"
+              ];
+          };
         in
         finix.lib.finixSystem {
           inherit (pkgs) lib;

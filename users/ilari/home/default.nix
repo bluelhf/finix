@@ -8,6 +8,7 @@
     ./terminal.nix
     ./browser.nix
     ./chat.nix
+    ./dev
     ./hyprland.nix
     ./launcher.nix
     ./screenshot.nix
