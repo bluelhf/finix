@@ -1,4 +1,4 @@
-{ config, lib, osConfig, ... }:
+{ config, lib, pkgs, osConfig, ... }:
 
 let
   terminal = config.local.apps.terminal;
@@ -54,6 +54,10 @@ in
 
       hl.bind(mod .. " + SHIFT + right", move_tag(1))
       hl.bind(mod .. " + SHIFT + left",  move_tag(-1))
+
+      hl.on("hyprland.start", function()
+        hl.exec_cmd("${lib.getExe pkgs.hyprshell} run")
+      end)
 
       hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
       hl.bind(mod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })

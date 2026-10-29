@@ -10,6 +10,7 @@
     ./chat.nix
     ./hyprland.nix
     ./launcher.nix
+    ./switcher.nix
     ./nix-tools.nix
   ];
 
