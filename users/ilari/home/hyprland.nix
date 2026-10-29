@@ -3,6 +3,7 @@
 let
   terminal = config.local.apps.terminal;
   launcher = config.local.apps.launcher;
+  screenshot = config.local.apps.screenshot;
   layout = builtins.toJSON osConfig.local.keyboardLayout;
 in
 {
@@ -29,6 +30,11 @@ in
 
       ${lib.optionalString (launcher != null)
         ''hl.bind(mod .. " + 7", hl.dsp.exec_cmd(${builtins.toJSON launcher}))''}
+
+      ${lib.optionalString (screenshot != null) ''
+        hl.bind("Print",       hl.dsp.exec_cmd(${builtins.toJSON "${screenshot} region"}))
+        hl.bind("ALT + Print", hl.dsp.exec_cmd(${builtins.toJSON "${screenshot} screen"}))
+      ''}
 
       hl.bind("ALT + F4", hl.dsp.window.close())
       hl.bind(mod .. " + SHIFT + E", hl.dsp.exit())
