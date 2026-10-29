@@ -47,6 +47,7 @@ in
       local TAGS = 10
       for i = 1, TAGS do
         hl.workspace_rule({ workspace = tostring(i), persistent = true })
+        hl.bind("CTRL + ALT + " .. (i % 10), hl.dsp.focus({ workspace = tostring(i) }))
       end
 
       local function move_tag(step)
