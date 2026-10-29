@@ -16,4 +16,5 @@
   };
 
   home-manager.users.ilari.imports = [ ./home inputs.nix-index-database.homeModules.default ];
+  home-manager.enableProfileInstall = false;
 }
