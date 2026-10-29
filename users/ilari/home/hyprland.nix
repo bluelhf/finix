@@ -38,6 +38,23 @@ in
       hl.bind(mod .. " + up",    hl.dsp.focus({ direction = "up" }))
       hl.bind(mod .. " + down",  hl.dsp.focus({ direction = "down" }))
 
+      local TAGS = 10
+      for i = 1, TAGS do
+        hl.workspace_rule({ workspace = tostring(i), persistent = true })
+      end
+
+      local function move_tag(step)
+        return function()
+          local ws = hl.get_active_workspace()
+          if not ws then return end
+          local target = (ws.id - 1 + step) % TAGS + 1
+          hl.dispatch(hl.dsp.window.move({ workspace = target, follow = true }))
+        end
+      end
+
+      hl.bind(mod .. " + SHIFT + right", move_tag(1))
+      hl.bind(mod .. " + SHIFT + left",  move_tag(-1))
+
       hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
       hl.bind(mod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
     '';
