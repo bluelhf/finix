@@ -40,6 +40,10 @@
           dir = ./hosts/qemulaattori;
           system = "x86_64-linux";
         };
+        kuutar = mkHost {
+          dir = ./hosts/kuutar;
+          system = "x86_64-linux";
+        };
       };
     };
 }
