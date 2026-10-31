@@ -11,6 +11,8 @@
     ../../profiles/nix.nix
     ../../profiles/boot.nix
     ../../profiles/network.nix
+    ../../profiles/wifi/eduroam.nix
+    ../../profiles/wifi/aalto.nix
     ../../profiles/bluetooth.nix
     ../../profiles/audio.nix
     ../../profiles/console.nix
