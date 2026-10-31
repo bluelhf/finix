@@ -4,6 +4,7 @@
   imports = [
     modules.fish
     inputs.community-modules.nixosModules.home-manager
+    ./wifi.nix
   ];
 
   programs.fish.enable = true;
