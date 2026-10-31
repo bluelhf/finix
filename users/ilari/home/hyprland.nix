@@ -6,6 +6,7 @@ let
   screenshot = config.local.apps.screenshot;
   layout = builtins.toJSON osConfig.local.keyboardLayout;
   audio = lib.attrByPath [ "programs" "wireplumber" "enable" ] false osConfig;
+  wpctl = "${osConfig.programs.wireplumber.package}/bin/wpctl";
   audioStart = pkgs.writeShellScript "audio-start" ''
     ${osConfig.programs.pipewire.package}/bin/pipewire &
     sleep 0.5
@@ -71,6 +72,13 @@ in
       hl.bind(mod .. " + SHIFT + left",  move_tag(-1))
 
       hl.bind(mod .. " + SHIFT + space", hl.dsp.window.float({ action = "toggle" }))
+
+      ${lib.optionalString audio ''
+        hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd(${builtins.toJSON "${wpctl} set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+"}), { locked = true, repeating = true })
+        hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd(${builtins.toJSON "${wpctl} set-volume @DEFAULT_AUDIO_SINK@ 5%-"}), { locked = true, repeating = true })
+        hl.bind("XF86AudioMute",        hl.dsp.exec_cmd(${builtins.toJSON "${wpctl} set-mute @DEFAULT_AUDIO_SINK@ toggle"}), { locked = true })
+        hl.bind("XF86AudioMicMute",     hl.dsp.exec_cmd(${builtins.toJSON "${wpctl} set-mute @DEFAULT_AUDIO_SOURCE@ toggle"}), { locked = true })
+      ''}
 
       hl.on("hyprland.start", function()
         hl.exec_cmd("${pkgs.dbus}/bin/dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE")
