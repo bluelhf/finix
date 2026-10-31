@@ -29,5 +29,6 @@
     "wheel"
     "video"
     "input"
+    "networkmanager"
   ];
 }
