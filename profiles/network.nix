@@ -2,12 +2,8 @@
 
 {
   imports = with modules; [
-    dhcpcd
-    iwd
+    networkmanager
   ];
 
-  services = {
-    dhcpcd.enable = true;
-    iwd.enable = true;
-  };
+  services.networkmanager.enable = true;
 }
