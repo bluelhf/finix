@@ -4,7 +4,7 @@
 {
   boot.loader.efi.canTouchEfiVariables = true;
 
-  hardware.firmware = [ pkgs.linux-firmware ];
+  hardware.firmware = [ pkgs.linux-firmware pkgs.sof-firmware ];
 
   fileSystems."/" =
     { device = "/dev/disk/by-uuid/0896db02-9e6f-44a1-bf45-c0a634ee7a2e";
