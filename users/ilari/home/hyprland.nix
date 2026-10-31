@@ -25,7 +25,7 @@ in
     extraConfig = ''
       local mod = "SUPER"
 
-      hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+      hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1.5 })
 
       hl.config({
         input = { kb_layout = ${layout} },
