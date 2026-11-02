@@ -1,9 +1,13 @@
 { config, lib, pkgs, modules, ... }:
 
 {
-  imports = [ modules.hyprland ];
+  imports = [
+    modules.hyprland
+    modules.sessiond-uaccess
+  ];
 
   programs.hyprland.enable = true;
+  services.sessiond-uaccess.enable = true;
   hardware.graphics.enable = true;
 
   xdg.portal = {

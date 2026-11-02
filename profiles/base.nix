@@ -20,6 +20,6 @@
     polkit.enable = true;
     dbus.enable = true;
     udev.enable = true;
-    elogind.enable = true;
+    sessiond.enable = true;
   };
 }
