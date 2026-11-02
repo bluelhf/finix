@@ -31,8 +31,7 @@
 
   users.users.ilari.extraGroups = [
     "wheel"
-    "video"
-    "input"
+    "video" "seat" "input"
     "networkmanager"
   ];
 }

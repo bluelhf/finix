@@ -7,7 +7,10 @@
   ];
 
   programs.hyprland.enable = true;
+
+  services.seatd.enable = true;
   services.sessiond-uaccess.enable = true;
+
   hardware.graphics.enable = true;
 
   xdg.portal = {
