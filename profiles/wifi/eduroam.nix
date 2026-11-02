@@ -4,10 +4,16 @@ let
   ini = pkgs.formats.ini { };
 in
 {
-  imports = [ ./identities.nix ];
+  imports = [
+    ./identities.nix
+    ../secrets.nix
+  ];
 
-  environment.etc."NetworkManager/system-connections/eduroam.nmconnection" = {
-    mode = "0600";
+  local.secrets.files.wifi-eduroam.file = ../../secrets/wifi-eduroam.age;
+
+  local.secrets.templates.eduroam = {
+    path = "/run/NetworkManager/system-connections/eduroam.nmconnection";
+    replace."@password@" = "wifi-eduroam";
     source = ini.generate "eduroam.nmconnection" {
       connection = {
         id = "eduroam";
@@ -23,7 +29,7 @@ in
         ca-cert = "${./harica-tls-ecc-root-2021.pem}";
         domain-match = "radius.org.aalto.fi";
         phase2-auth = "mschapv2";
-        password-flags = 1;
+        password = "@password@";
       };
       ipv4.method = "auto";
       ipv6.method = "auto";

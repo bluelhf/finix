@@ -4,10 +4,16 @@ let
   ini = pkgs.formats.ini { };
 in
 {
-  imports = [ ./identities.nix ];
+  imports = [
+    ./identities.nix
+    ../secrets.nix
+  ];
 
-  environment.etc."NetworkManager/system-connections/aalto.nmconnection" = {
-    mode = "0600";
+  local.secrets.files.wifi-aalto.file = ../../secrets/wifi-aalto.age;
+
+  local.secrets.templates.aalto = {
+    path = "/run/NetworkManager/system-connections/aalto.nmconnection";
+    replace."@password@" = "wifi-aalto";
     source = ini.generate "aalto.nmconnection" {
       connection = {
         id = "aalto";
@@ -23,7 +29,7 @@ in
         ca-cert = "${./harica-tls-ecc-root-2021.pem}";
         domain-match = "radius.org.aalto.fi";
         phase2-auth = "mschapv2";
-        password-flags = 1;
+        password = "@password@";
       };
       ipv4.method = "auto";
       ipv6.method = "auto";
