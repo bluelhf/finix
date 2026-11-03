@@ -14,6 +14,7 @@
     ./screenshot.nix
     ./switcher.nix
     ./theme.nix
+    ./wallpaper.nix
     ./nix-tools.nix
   ];
 

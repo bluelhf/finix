@@ -21,4 +21,11 @@
     example = "screenshot";
     description = "screenshot command, takes `screen` or `region` as its argument";
   };
+
+  options.local.apps.wallpaper = lib.mkOption {
+    type = with lib.types; nullOr str;
+    default = null;
+    example = "swaybg -i wallpaper.png";
+    description = "wallpaper command, started with the session and expected to keep running";
+  };
 }
