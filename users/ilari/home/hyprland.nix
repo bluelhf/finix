@@ -33,6 +33,8 @@ in
           "cursor = { no_hardware_cursors = true },"}
       })
 
+      hl.layer_rule({ match = { namespace = "launcher" }, blur = true, ignore_alpha = 0.5 })
+
       ${lib.optionalString (terminal != null)
         ''hl.bind(mod .. " + RETURN", hl.dsp.exec_cmd(${builtins.toJSON terminal}))''}
 
