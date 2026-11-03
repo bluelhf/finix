@@ -1,0 +1,1732 @@
+From a389621bd68c2b108e943b3eccf39131fc780787 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 3 Nov 2026 10:18:55 +0000
+Subject: [PATCH] fix: support hyprland 0.57 workspace addresses
+
+Hyprland 0.57 (hyprwm/Hyprland#16140, #16269) removed the global numeric
+workspace id in favour of addressables. `hyprctl workspaces/activeworkspace/
+monitors/clients -j` now send `address` and `type` (`normal`/`special`);
+`id` only exists for numbered workspaces and unused special workspaces are
+sent as {"address":"","type":"","name":""}. The socket2 `*v2` workspace
+events start with the address (`3`, `foo`, `special:foo`) instead of the id.
+
+This made deserialization fail with `missing field id` and made the event
+listener die with `invalid integer` as soon as a named/special workspace
+event arrived (which also stopped monitor/config reload handling).
+
+hyprland-rs (vendored):
+- `Workspace`/`WorkspaceBasic`: `id` is now `Option`, add `address` and
+  `kind` (+ `is_special()`, `selector()`); output of older versions is
+  converted (regular -> id as address, special -> name as address)
+- workspace events and `WindowMoved` carry `address` and an optional `id`
+  and no longer fail to parse for named/special workspaces
+- add `WorkspaceKind` and `workspace_selector()`
+
+hyprshell:
+- `WorkspaceId` is now the workspace address (String) instead of `i32`,
+  `Active` is no longer `Copy`
+- sort workspaces via `workspace_sort_key()` (special, numbered, named)
+  instead of relying on negative ids for special workspaces
+- switch to workspaces from their address: numbered -> `N`,
+  named -> `name:X`, special -> `special:X` (lua and legacy dispatchers)
+
+Not tested against a live 0.57 session.
+---
+ crates/core-lib/src/data.rs                   |  27 ++-
+ crates/exec-lib/src/collect.rs                |  27 ++-
+ crates/exec-lib/src/switch.rs                 | 184 ++++++++-------
+ crates/exec-lib/src/util.rs                   |   2 +-
+ crates/windows-lib/src/next.rs                | 210 +++++++++---------
+ crates/windows-lib/src/overview/root.rs       |  32 +--
+ crates/windows-lib/src/overview/window.rs     |   2 +-
+ crates/windows-lib/src/shared/workspaces.rs   |  13 +-
+ crates/windows-lib/src/sort.rs                |  27 +--
+ crates/windows-lib/src/switch/root.rs         |  38 ++--
+ dep-crates/hyprland-rs/src/data/regular.rs    | 181 ++++++++++++++-
+ .../hyprland-rs/src/event_listener/shared.rs  | 125 +++++++++--
+ dep-crates/hyprland-rs/src/shared.rs          |  52 +++++
+ 13 files changed, 623 insertions(+), 297 deletions(-)
+
+diff --git a/crates/core-lib/src/data.rs b/crates/core-lib/src/data.rs
+index 35b6f77..d175a04 100644
+--- a/crates/core-lib/src/data.rs
++++ b/crates/core-lib/src/data.rs
+@@ -1,8 +1,12 @@
+-pub type WorkspaceId = i32;
++/// The stable address of a workspace (`3`, `foo` or `special:foo`).
++///
++/// Since Hyprland 0.57 workspaces no longer have a numeric id (only numbered workspaces do),
++/// the address is the only identity every workspace has.
++pub type WorkspaceId = String;
+ pub type MonitorId = i128;
+ pub type ClientId = u64;
+ 
+-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
++#[derive(Debug, Clone, Eq, PartialEq)]
+ pub struct Active {
+     pub client: Option<ClientId>,
+     pub workspace: WorkspaceId,
+@@ -52,6 +56,25 @@ pub struct HyprlandData {
+     pub monitors: Vec<(MonitorId, MonitorData)>,
+ }
+ 
++/// Is the workspace address the address of a special workspace
++#[must_use]
++pub fn is_special_workspace(address: &str) -> bool {
++    address.starts_with("special:")
++}
++
++/// Key to sort workspaces by their address: special workspaces first,
++/// then numbered workspaces by number and named workspaces by name
++#[must_use]
++pub fn workspace_sort_key(address: &str) -> (u8, u32, &str) {
++    if is_special_workspace(address) {
++        (0, 0, address)
++    } else if let Ok(number) = address.parse::<u32>() {
++        (1, number, address)
++    } else {
++        (2, 0, address)
++    }
++}
++
+ pub trait ByFirst<ID, Data> {
+     fn find_by_first(&self, id: &ID) -> Option<&Data>;
+ }
+diff --git a/crates/exec-lib/src/collect.rs b/crates/exec-lib/src/collect.rs
+index ec346c7..71a99db 100644
+--- a/crates/exec-lib/src/collect.rs
++++ b/crates/exec-lib/src/collect.rs
+@@ -1,6 +1,9 @@
+ use crate::util::to_client_id;
+ use anyhow::Context;
+-use core_lib::{ByFirst, ClientData, ClientId, MonitorData, MonitorId, WorkspaceData, WorkspaceId};
++use core_lib::{
++    ByFirst, ClientData, ClientId, MonitorData, MonitorId, WorkspaceData, WorkspaceId,
++    workspace_sort_key,
++};
+ use hyprland::data::{Client, Clients, Monitor, Monitors, Workspace, Workspaces};
+ use hyprland::prelude::*;
+ use regex::Regex;
+@@ -9,21 +12,23 @@ use tracing::{debug_span, instrument, trace, warn};
+ fn get_hypr_data() -> anyhow::Result<(Vec<Monitor>, Vec<Workspace>, Vec<Client>)> {
+     let _span = debug_span!("get_hypr_data").entered();
+     let monitors = Monitors::get().context("monitors failed")?.to_vec();
+-    // sort and filter all workspaces sorted by ID
++    // sort and filter all workspaces sorted by address (see `workspace_sort_key`)
+     let workspaces = {
+         let mut workspaces = Workspaces::get()
+             .context("workspaces failed")?
+             .into_iter()
+-            .filter(|w| w.id != -1) // TODO: check if still needed: ignore clients on invalid workspaces
++            .filter(|w| !w.address.is_empty()) // ignore invalid workspaces (empty address)
+             .collect::<Vec<_>>();
+ 
+-        workspaces.sort_by_key(|a| a.id);
++        workspaces.sort_by(|a, b| {
++            workspace_sort_key(&a.address).cmp(&workspace_sort_key(&b.address))
++        });
+         workspaces
+     };
+     let clients = Clients::get()
+         .context("clients failed")?
+         .into_iter()
+-        .filter(|c| c.workspace.id != -1) // TODO: check if still needed: ignore clients on invalid workspaces
++        .filter(|c| !c.workspace.address.is_empty()) // ignore clients on invalid workspaces
+         .collect::<Vec<_>>();
+ 
+     Ok((monitors, workspaces, clients))
+@@ -77,7 +82,7 @@ pub fn collect_hypr_data(
+                 .filter(|ws| ws.monitor_id == Some(*monitor_id))
+                 .for_each(|workspace| {
+                     wd.push((
+-                        workspace.id,
++                        workspace.address.clone(),
+                         WorkspaceData {
+                             name: workspace.name.clone(),
+                             monitor: *monitor_id,
+@@ -98,7 +103,7 @@ pub fn collect_hypr_data(
+             let Some(monitor) = client.monitor else {
+                 continue;
+             };
+-            if workspace_data.find_by_first(&client.workspace.id).is_some() {
++            if workspace_data.find_by_first(&client.workspace.address).is_some() {
+                 cd.push((
+                     to_client_id(&client.address),
+                     ClientData {
+@@ -107,7 +112,7 @@ pub fn collect_hypr_data(
+                         width: client.size.0,
+                         height: client.size.1,
+                         class: client.class.clone(),
+-                        workspace: client.workspace.id,
++                        workspace: client.workspace.address.clone(),
+                         monitor,
+                         focus_history_id: client.focus_history_id,
+                         title: client.title.clone(),
+@@ -140,17 +145,17 @@ pub fn collect_hypr_data(
+     trace!("workspaces after filter by regex: {}", workspace_data.len());
+     client_data.retain(|(_id, cl)| workspace_data.find_by_first(&cl.workspace).is_some());
+ 
+-    workspace_data.sort_by_key(|a| a.0);
++    workspace_data.sort_by(|a, b| workspace_sort_key(&a.0).cmp(&workspace_sort_key(&b.0)));
+     monitor_data.sort_by_key(|a| a.0);
+ 
+     // is broken, reports the "normal" workspace as active when a client in special workspace is selected
+     // let active_ws = Workspace::get_active()?.id;
+     let active_ws = Workspace::get_active()
+-        .map(|w| w.id)
++        .map(|w| w.address)
+         .context("active workspace failed")?;
+     let active_ws = Client::get_active()
+         .context("active client failed")?
+-        .map_or(active_ws, |a| a.workspace.id);
++        .map_or(active_ws, |a| a.workspace.address);
+     let active_monitor = Monitor::get_active().context("active monitor failed")?.id;
+     let active_client = Client::get_active()
+         .context("active client failed")?
+diff --git a/crates/exec-lib/src/switch.rs b/crates/exec-lib/src/switch.rs
+index 4a62c99..10336e1 100644
+--- a/crates/exec-lib/src/switch.rs
++++ b/crates/exec-lib/src/switch.rs
+@@ -1,12 +1,11 @@
+ use crate::util::to_client_address;
+ use anyhow::Context;
+-use core_lib::{ClientId, Warn};
+-use hyprland::data::{Client, Monitors, Workspace, Workspaces};
++use core_lib::{ClientId, Warn, WorkspaceId, is_special_workspace};
++use hyprland::data::{Client, Monitors, Workspace};
+ use hyprland::dispatch::{
+     Dispatch, DispatchType, WindowIdentifier, WorkspaceIdentifierWithSpecial,
+ };
+ use hyprland::prelude::*;
+-use hyprland::shared::WorkspaceId;
+ use tracing::{debug, instrument, trace, warn};
+ 
+ #[instrument(level = "debug", ret(level = "trace"))]
+@@ -95,115 +94,131 @@ fn switch_client_by_initial_class_legacy(class: &str) -> anyhow::Result<()> {
+     Ok(())
+ }
+ 
++/// How a workspace has to be selected in dispatchers, derived from its address
++#[derive(Debug, Clone, PartialEq, Eq)]
++enum WorkspaceTarget {
++    /// numbered workspace (address is the number)
++    Numbered(i32),
++    /// named workspace (address is the name)
++    Named(String),
++    /// special workspace (address is `special:<name>`, this holds the name without prefix)
++    Special(String),
++}
++
++impl WorkspaceTarget {
++    fn from_address(address: &str) -> Self {
++        if let Some(name) = address.strip_prefix("special:") {
++            Self::Special(name.to_string())
++        } else if let Ok(id) = address.parse::<i32>() {
++            Self::Numbered(id)
++        } else {
++            Self::Named(address.to_string())
++        }
++    }
++}
++
+ #[instrument(level = "debug", ret(level = "trace"))]
+-pub fn switch_workspace(workspace_id: WorkspaceId) -> anyhow::Result<()> {
++pub fn switch_workspace(workspace: &WorkspaceId) -> anyhow::Result<()> {
+     deactivate_special_workspace_if_needed().warn();
+ 
+     // check if already on workspace (if so, don't switch because it throws an error `Previous workspace doesn't exist`)
+     let current_workspace = Workspace::get_active();
+-    if let Ok(workspace) = current_workspace
+-        && workspace_id == workspace.id
++    if let Ok(current) = current_workspace
++        && current.address == *workspace
+     {
+-        trace!("Already on workspace {}", workspace_id);
++        trace!("Already on workspace {}", workspace);
+         return Ok(());
+     }
+ 
+-    if workspace_id < 0 {
+-        switch_special_workspace(workspace_id).with_context(|| {
+-            format!("Failed to execute switch special workspace with id {workspace_id}")
+-        })?;
+-    } else {
+-        switch_normal_workspace(workspace_id).with_context(|| {
+-            format!("Failed to execute switch workspace with id {workspace_id}")
+-        })?;
++    match WorkspaceTarget::from_address(workspace) {
++        WorkspaceTarget::Special(name) => {
++            switch_special_workspace(workspace, &name).with_context(|| {
++                format!("Failed to execute switch special workspace {workspace}")
++            })?;
++        }
++        target => {
++            switch_normal_workspace(&target)
++                .with_context(|| format!("Failed to execute switch workspace {workspace}"))?;
++        }
+     }
+     Ok(())
+ }
+ 
+ #[instrument(level = "debug", ret(level = "trace"))]
+-fn switch_special_workspace(workspace_id: WorkspaceId) -> anyhow::Result<()> {
+-    match switch_special_workspace_lua(workspace_id) {
++fn switch_special_workspace(address: &str, name: &str) -> anyhow::Result<()> {
++    // already toggled on some monitor
++    let special = Monitors::get()?
++        .into_iter()
++        .find(|m| m.special_workspace.address == address);
++    if let Some(special) = special {
++        trace!("Special workspace already toggled: {special:?}");
++        return Ok(());
++    }
++    match toggle_special_workspace_lua(name) {
+         Err(e) => {
+             warn!(
+                 "Failed to switch special workspace: {}, trying legacy syntax",
+                 e
+             );
+-            switch_special_workspace_legacy(workspace_id)
++            toggle_special_workspace_legacy(name)
+         }
+         Ok(r) => Ok(r),
+     }
+ }
+ 
+-fn switch_special_workspace_legacy(workspace_id: WorkspaceId) -> anyhow::Result<()> {
+-    let special = Monitors::get()?
+-        .into_iter()
+-        .find(|m| m.special_workspace.id == workspace_id);
+-    if let Some(special) = special {
+-        trace!("Special workspace already toggled: {special:?}");
+-        return Ok(());
+-    }
+-    let ws = Workspaces::get()?
+-        .into_iter()
+-        .find(|w| w.id == workspace_id)
+-        .context("workspace not found")?;
+-
+-    Dispatch::call(DispatchType::ToggleSpecialWorkspace(Some(
+-        ws.name.trim_start_matches("special:").to_string(),
+-    )))
+-    .context("failed to execute dispatch")?;
+-    Ok(())
+-}
+-
+-fn switch_special_workspace_lua(workspace_id: WorkspaceId) -> anyhow::Result<()> {
+-    let special = Monitors::get()?
+-        .into_iter()
+-        .find(|m| m.special_workspace.id == workspace_id);
+-    if let Some(special) = special {
+-        trace!("Special workspace already toggled: {special:?}");
+-        return Ok(());
+-    }
+-    let ws = Workspaces::get()?
+-        .into_iter()
+-        .find(|w| w.id == workspace_id)
+-        .context("workspace not found")?;
+-
++fn toggle_special_workspace_lua(name: &str) -> anyhow::Result<()> {
++    debug!("execute switch to special workspace {name}");
+     let disp = hyprland::dispatch_new::Dispatch::FocusWorkspace(
+-        hyprland::dispatch_new::WorkspaceIdentifier::Special(Some(
+-            ws.name.trim_start_matches("special:").to_string(),
+-        )),
++        hyprland::dispatch_new::WorkspaceIdentifier::Special(Some(name.to_string())),
+         false,
+     );
+     disp.apply().context("failed to execute dispatch")?;
+     Ok(())
+ }
+ 
++fn toggle_special_workspace_legacy(name: &str) -> anyhow::Result<()> {
++    debug!("execute switch to special workspace {name}");
++    Dispatch::call(DispatchType::ToggleSpecialWorkspace(Some(name.to_string())))
++        .context("failed to execute dispatch")?;
++    Ok(())
++}
++
+ #[instrument(level = "debug", ret(level = "trace"))]
+-fn switch_normal_workspace(workspace_id: WorkspaceId) -> anyhow::Result<()> {
+-    match switch_normal_workspace_lua(workspace_id) {
++fn switch_normal_workspace(target: &WorkspaceTarget) -> anyhow::Result<()> {
++    match switch_normal_workspace_lua(target) {
+         Err(e) => {
+             warn!("Failed to switch workspace: {}, trying legacy syntax", e);
+-            switch_normal_workspace_legacy(workspace_id)
++            switch_normal_workspace_legacy(target)
+         }
+         Ok(r) => Ok(r),
+     }
+ }
+ 
+-fn switch_normal_workspace_lua(workspace_id: WorkspaceId) -> anyhow::Result<()> {
+-    debug!("execute switch to workspace {workspace_id}");
+-    let disp = hyprland::dispatch_new::Dispatch::FocusWorkspace(
+-        hyprland::dispatch_new::WorkspaceIdentifier::Id(workspace_id),
+-        false,
+-    );
++fn switch_normal_workspace_lua(target: &WorkspaceTarget) -> anyhow::Result<()> {
++    debug!("execute switch to workspace {target:?}");
++    let identifier = match target {
++        WorkspaceTarget::Numbered(id) => hyprland::dispatch_new::WorkspaceIdentifier::Id(*id),
++        WorkspaceTarget::Named(name) => {
++            hyprland::dispatch_new::WorkspaceIdentifier::Name(name.clone())
++        }
++        WorkspaceTarget::Special(name) => {
++            hyprland::dispatch_new::WorkspaceIdentifier::Special(Some(name.clone()))
++        }
++    };
++    let disp = hyprland::dispatch_new::Dispatch::FocusWorkspace(identifier, false);
+     disp.apply().context("failed to execute dispatch")?;
+     Ok(())
+ }
+ 
+-fn switch_normal_workspace_legacy(workspace_id: WorkspaceId) -> anyhow::Result<()> {
+-    debug!("execute switch to workspace {workspace_id}");
+-    Dispatch::call(DispatchType::Workspace(WorkspaceIdentifierWithSpecial::Id(
+-        workspace_id,
+-    )))
+-    .context("failed to execute dispatch")?;
++fn switch_normal_workspace_legacy(target: &WorkspaceTarget) -> anyhow::Result<()> {
++    debug!("execute switch to workspace {target:?}");
++    let identifier = match target {
++        WorkspaceTarget::Numbered(id) => WorkspaceIdentifierWithSpecial::Id(*id),
++        WorkspaceTarget::Named(name) => WorkspaceIdentifierWithSpecial::Name(name.as_str()),
++        WorkspaceTarget::Special(name) => WorkspaceIdentifierWithSpecial::Special(Some(name.as_str())),
++    };
++    Dispatch::call(DispatchType::Workspace(identifier))
++        .context("failed to execute dispatch")?;
+     Ok(())
+ }
+ 
+@@ -213,45 +228,26 @@ fn switch_normal_workspace_legacy(workspace_id: WorkspaceId) -> anyhow::Result<(
+ #[instrument(level = "debug", ret(level = "trace"))]
+ fn deactivate_special_workspace_if_needed() -> anyhow::Result<()> {
+     let active_ws = Workspace::get_active()
+-        .map(|w| w.name)
++        .map(|w| w.address)
+         .context("active workspace failed")?;
+     let active_ws = Client::get_active()
+         .context("active client failed")?
+-        .map_or(active_ws, |a| a.workspace.name);
++        .map_or(active_ws, |a| a.workspace.address);
+     trace!("current workspace: {active_ws}");
+-    if active_ws.starts_with("special:") {
++    if is_special_workspace(&active_ws) {
+         debug!("current client is on special workspace, deactivating special workspace");
+         // current client is on special workspace
+-        match deactivate_special_workspace_if_needed_lua(&active_ws) {
++        let name = active_ws.trim_start_matches("special:");
++        match toggle_special_workspace_lua(name) {
+             Err(e) => {
+                 warn!(
+                     "Failed to deactivate special workspace: {}, trying legacy syntax",
+                     e
+                 );
+-                deactivate_special_workspace_if_needed_legacy(&active_ws)
++                toggle_special_workspace_legacy(name)
+             }
+             Ok(r) => Ok(r),
+         }?;
+     }
+     Ok(())
+ }
+-
+-fn deactivate_special_workspace_if_needed_lua(name: &str) -> anyhow::Result<()> {
+-    debug!("execute switch to workspace {name}");
+-    let disp = hyprland::dispatch_new::Dispatch::FocusWorkspace(
+-        hyprland::dispatch_new::WorkspaceIdentifier::Special(Some(
+-            name.trim_start_matches("special:").to_string(),
+-        )),
+-        false,
+-    );
+-    disp.apply().context("failed to execute dispatch")?;
+-    Ok(())
+-}
+-
+-fn deactivate_special_workspace_if_needed_legacy(name: &str) -> anyhow::Result<()> {
+-    debug!("execute switch to workspace {name}");
+-    Dispatch::call(DispatchType::ToggleSpecialWorkspace(Some(
+-        name.trim_start_matches("special:").to_string(),
+-    )))?;
+-    Ok(())
+-}
+diff --git a/crates/exec-lib/src/util.rs b/crates/exec-lib/src/util.rs
+index e6f977e..56cfc70 100644
+--- a/crates/exec-lib/src/util.rs
++++ b/crates/exec-lib/src/util.rs
+@@ -112,7 +112,7 @@ fn internal_get_initial_active() -> anyhow::Result<Active> {
+         .map(|c| to_client_id(&c.address));
+     let active_ws = Workspace::get_active()
+         .context("unable to get initial workspace")?
+-        .id;
++        .address;
+     let active_monitor = Monitor::get_active()
+         .context("unable to get initial monitor")?
+         .id;
+diff --git a/crates/windows-lib/src/next.rs b/crates/windows-lib/src/next.rs
+index 4788ada..d097cba 100644
+--- a/crates/windows-lib/src/next.rs
++++ b/crates/windows-lib/src/next.rs
+@@ -28,7 +28,7 @@ pub fn find_next_workspace(
+         let workspaces = &hypr_data.workspaces[0];
+         return Active {
+             client: None,
+-            workspace: workspaces.0,
++            workspace: workspaces.0.clone(),
+             monitor: workspaces.1.monitor,
+         };
+     }
+@@ -46,7 +46,7 @@ pub fn find_next_workspace(
+         .get(index)
+         .map(|(id, data)| Active {
+             client: None,
+-            workspace: *id,
++            workspace: id.clone(),
+             monitor: data.monitor,
+         })
+         .unwrap_or_else(|| {
+@@ -90,7 +90,7 @@ pub fn find_next_client(
+                 let client = &hypr_data.clients[0];
+                 return Active {
+                     client: Some(client.0),
+-                    workspace: client.1.workspace,
++                    workspace: client.1.workspace.clone(),
+                     monitor: client.1.monitor,
+                 };
+             }
+@@ -104,7 +104,7 @@ pub fn find_next_client(
+                 .get(index)
+                 .map(|(id, data)| Active {
+                     client: Some(*id),
+-                    workspace: data.workspace,
++                    workspace: data.workspace.clone(),
+                     monitor: data.monitor,
+                 })
+                 .unwrap_or_else(|| {
+@@ -244,7 +244,7 @@ fn find_first_client(
+         });
+     Active {
+         client: Some(*id),
+-        workspace: next.workspace,
++        workspace: next.workspace.clone(),
+         monitor: next.monitor,
+     }
+ }
+@@ -274,7 +274,7 @@ mod tests {
+                         class: String::new(),
+                         title: String::new(),
+                         #[allow(clippy::cast_possible_wrap)]
+-                        workspace: (i % workspace_count) as WorkspaceId,
++                        workspace: (i % workspace_count).to_string(),
+                         monitor: 0,
+                         focus_history_id: 0,
+                         floating: false,
+@@ -290,7 +290,7 @@ mod tests {
+         let workspaces: Vec<(WorkspaceId, WorkspaceData)> = (0..workspace_count)
+             .map(|i| {
+                 (
+-                    i as WorkspaceId,
++                    i.to_string(),
+                     WorkspaceData {
+                         name: String::new(),
+                         width: 0,
+@@ -298,7 +298,7 @@ mod tests {
+                         monitor: 0,
+                         any_client_enabled: clients
+                             .iter()
+-                            .any(|(_, c)| c.workspace == i as WorkspaceId && c.enabled),
++                            .any(|(_, c)| c.workspace == i.to_string() && c.enabled),
+                     },
+                 )
+             })
+@@ -318,26 +318,26 @@ mod tests {
+         };
+         let active = Active {
+             client: None,
+-            workspace: 0,
++            workspace: "0".to_string(),
+             monitor: 0,
+         };
+         trace!("data: {hypr_data:?}");
+ 
+         assert_eq!(
+-            find_next_workspace(Direction::Right, true, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Right, true, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Left, true, &hypr_data, active, 6),
+-            active
++            find_next_workspace(Direction::Left, true, &hypr_data, active.clone(), 6),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Up, false, &hypr_data, active, 200),
+-            active
++            find_next_workspace(Direction::Up, false, &hypr_data, active.clone(), 200),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Down, false, &hypr_data, active, 0),
+-            active
++            find_next_workspace(Direction::Down, false, &hypr_data, active.clone(), 0),
++            active.clone()
+         );
+     }
+ 
+@@ -352,42 +352,42 @@ mod tests {
+         };
+         let active = Active {
+             client: None,
+-            workspace: 0,
++            workspace: "0".to_string(),
+             monitor: 0,
+         };
+         trace!("data: {hypr_data:?}");
+ 
+         assert_eq!(
+-            find_next_workspace(Direction::Right, true, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Right, true, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Left, true, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Left, true, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Up, true, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Up, true, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Down, true, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Down, true, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Right, false, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Right, false, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Left, false, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Left, false, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Up, false, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Up, false, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Down, false, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Down, false, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+     }
+ 
+@@ -402,42 +402,42 @@ mod tests {
+         };
+         let active = Active {
+             client: None,
+-            workspace: 0,
++            workspace: "0".to_string(),
+             monitor: 0,
+         };
+         trace!("data: {hypr_data:?}");
+ 
+         assert_eq!(
+-            find_next_workspace(Direction::Right, true, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Right, true, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Left, true, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Left, true, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Up, true, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Up, true, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Down, true, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Down, true, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Right, false, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Right, false, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Left, false, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Left, false, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Up, false, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Up, false, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+         assert_eq!(
+-            find_next_workspace(Direction::Down, false, &hypr_data, active, 3),
+-            active
++            find_next_workspace(Direction::Down, false, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+     }
+     #[test_log::test]
+@@ -451,30 +451,30 @@ mod tests {
+         };
+         let active = Active {
+             client: None,
+-            workspace: 0,
++            workspace: "0".to_string(),
+             monitor: 0,
+         };
+         trace!("data: {hypr_data:?}");
+ 
+-        let next = find_next_workspace(Direction::Right, true, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 1);
+-        let next = find_next_workspace(Direction::Left, true, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 4);
+-
+-        let next = find_next_workspace(Direction::Up, true, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 3);
+-        let next = find_next_workspace(Direction::Down, true, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 3);
+-
+-        let next = find_next_workspace(Direction::Right, false, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 1);
+-        let next = find_next_workspace(Direction::Left, false, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 0);
+-
+-        let next = find_next_workspace(Direction::Up, false, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 0);
+-        let next = find_next_workspace(Direction::Down, false, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 3);
++        let next = find_next_workspace(Direction::Right, true, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "1");
++        let next = find_next_workspace(Direction::Left, true, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "4");
++
++        let next = find_next_workspace(Direction::Up, true, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "3");
++        let next = find_next_workspace(Direction::Down, true, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "3");
++
++        let next = find_next_workspace(Direction::Right, false, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "1");
++        let next = find_next_workspace(Direction::Left, false, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "0");
++
++        let next = find_next_workspace(Direction::Up, false, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "0");
++        let next = find_next_workspace(Direction::Down, false, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "3");
+     }
+ 
+     #[test_log::test]
+@@ -488,30 +488,30 @@ mod tests {
+         };
+         let active = Active {
+             client: None,
+-            workspace: 0,
++            workspace: "0".to_string(),
+             monitor: 0,
+         };
+         trace!("data: {hypr_data:?}");
+ 
+-        let next = find_next_workspace(Direction::Right, true, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 1);
+-        let next = find_next_workspace(Direction::Left, true, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 2);
+-
+-        let next = find_next_workspace(Direction::Up, true, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 0);
+-        let next = find_next_workspace(Direction::Down, true, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 0);
+-
+-        let next = find_next_workspace(Direction::Right, false, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 1);
+-        let next = find_next_workspace(Direction::Left, false, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 0);
+-
+-        let next = find_next_workspace(Direction::Up, false, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 0);
+-        let next = find_next_workspace(Direction::Down, false, &hypr_data, active, 3);
+-        assert_eq!(next.workspace, 0);
++        let next = find_next_workspace(Direction::Right, true, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "1");
++        let next = find_next_workspace(Direction::Left, true, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "2");
++
++        let next = find_next_workspace(Direction::Up, true, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "0");
++        let next = find_next_workspace(Direction::Down, true, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "0");
++
++        let next = find_next_workspace(Direction::Right, false, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "1");
++        let next = find_next_workspace(Direction::Left, false, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "0");
++
++        let next = find_next_workspace(Direction::Up, false, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "0");
++        let next = find_next_workspace(Direction::Down, false, &hypr_data, active.clone(), 3);
++        assert_eq!(next.workspace, "0");
+     }
+ 
+     #[test_log::test]
+@@ -528,12 +528,12 @@ mod tests {
+ 
+         let active = Active {
+             client: None,
+-            workspace: 0,
++            workspace: "0".to_string(),
+             monitor: 0,
+         };
+         assert_eq!(
+-            find_next_client(Direction::Right, true, &hypr_data, active, 3),
+-            active
++            find_next_client(Direction::Right, true, &hypr_data, active.clone(), 3),
++            active.clone()
+         );
+     }
+ 
+@@ -551,38 +551,38 @@ mod tests {
+ 
+         let active = Active {
+             client: None,
+-            workspace: 0,
++            workspace: "0".to_string(),
+             monitor: 0,
+         };
+         assert_eq!(
+-            find_next_client(Direction::Left, true, &hypr_data, active, 3),
++            find_next_client(Direction::Left, true, &hypr_data, active.clone(), 3),
+             Active {
+                 client: Some(0),
+-                workspace: 0,
++                workspace: "0".to_string(),
+                 monitor: 0,
+             }
+         );
+         assert_eq!(
+-            find_next_client(Direction::Right, true, &hypr_data, active, 3),
++            find_next_client(Direction::Right, true, &hypr_data, active.clone(), 3),
+             Active {
+                 client: Some(0),
+-                workspace: 0,
++                workspace: "0".to_string(),
+                 monitor: 0,
+             }
+         );
+         assert_eq!(
+-            find_next_client(Direction::Up, true, &hypr_data, active, 3),
++            find_next_client(Direction::Up, true, &hypr_data, active.clone(), 3),
+             Active {
+                 client: Some(0),
+-                workspace: 0,
++                workspace: "0".to_string(),
+                 monitor: 0,
+             }
+         );
+         assert_eq!(
+-            find_next_client(Direction::Down, true, &hypr_data, active, 3),
++            find_next_client(Direction::Down, true, &hypr_data, active.clone(), 3),
+             Active {
+                 client: Some(0),
+-                workspace: 0,
++                workspace: "0".to_string(),
+                 monitor: 0,
+             }
+         );
+@@ -594,7 +594,7 @@ mod tests {
+         fn current(idx: u64) -> Active {
+             Active {
+                 client: Some(idx),
+-                workspace: 1,
++                workspace: "1".to_string(),
+                 monitor: 0,
+             }
+         }
+@@ -655,7 +655,7 @@ mod tests {
+         fn current(idx: u64) -> Active {
+             Active {
+                 client: Some(idx),
+-                workspace: 1,
++                workspace: "1".to_string(),
+                 monitor: 0,
+             }
+         }
+diff --git a/crates/windows-lib/src/overview/root.rs b/crates/windows-lib/src/overview/root.rs
+index 5493149..6a70118 100644
+--- a/crates/windows-lib/src/overview/root.rs
++++ b/crates/windows-lib/src/overview/root.rs
+@@ -230,7 +230,7 @@ impl OverviewRoot {
+             active,
+             hypr_data: hypr_data.clone(),
+         };
+-        self.render(hypr_data, self.data.active, true);
++        self.render(hypr_data, self.data.active.clone(), true);
+     }
+ 
+     fn navigate(&mut self, direction: Direction, workspace: bool) {
+@@ -239,7 +239,7 @@ impl OverviewRoot {
+                 direction,
+                 false,
+                 &self.data.hypr_data,
+-                self.data.active,
++                self.data.active.clone(),
+                 self.general.items_per_row,
+             )
+         } else {
+@@ -253,17 +253,17 @@ impl OverviewRoot {
+                 direction,
+                 false,
+                 &self.data.hypr_data,
+-                self.data.active,
++                self.data.active.clone(),
+                 self.general.items_per_row,
+             )
+         };
+ 
+-        let old_active = self.data.active;
+-        self.data.active = new_active;
++        let old_active = self.data.active.clone();
++        self.data.active = new_active.clone();
+ 
+         if new_active != old_active {
+             for window in self.windows.values() {
+-                window.emit(OverviewWindowInput::SetActive(old_active, new_active));
++                window.emit(OverviewWindowInput::SetActive(old_active.clone(), new_active.clone()));
+             }
+         }
+     }
+@@ -300,7 +300,7 @@ impl OverviewRoot {
+                     ControlFlow::Break
+                 });
+             } else {
+-                let id = self.data.active.workspace;
++                let id = self.data.active.workspace.clone();
+                 debug!(
+                     "Switching to workspace {}",
+                     self.data
+@@ -311,7 +311,7 @@ impl OverviewRoot {
+                         .map_or_else(|| "<Unknown>".to_string(), |(_, w)| w.name.clone())
+                 );
+                 glib::idle_add_local(move || {
+-                    if let Err(e) = switch_workspace(id) {
++                    if let Err(e) = switch_workspace(&id) {
+                         tracing::warn!("Failed to switch to workspace {id:?}: {e}");
+                     }
+                     ControlFlow::Break
+@@ -339,26 +339,26 @@ impl OverviewRoot {
+             }
+         };
+ 
+-        while match self.data.active {
++        while match &self.data.active {
+             Active {
+                 client: Some(id), ..
+-            } => hypr_data.clients.find_by_first(&id).is_none(),
+-            Active { workspace: id, .. } => hypr_data.workspaces.find_by_first(&id).is_none(),
++            } => hypr_data.clients.find_by_first(id).is_none(),
++            Active { workspace: id, .. } => hypr_data.workspaces.find_by_first(id).is_none(),
+         } {
+             self.data.active = find_next_workspace(
+                 Direction::Right,
+                 true,
+                 &hypr_data,
+-                self.data.active,
++                self.data.active.clone(),
+                 self.general.items_per_row,
+             );
+         }
+ 
+         self.data = OverviewData {
+-            active: self.data.active,
++            active: self.data.active.clone(),
+             hypr_data: hypr_data.clone(),
+         };
+-        self.render(hypr_data, self.data.active, false);
++        self.render(hypr_data, self.data.active.clone(), false);
+     }
+ 
+     fn render(&self, hypr_data: HyprlandData, active: Active, open: bool) {
+@@ -381,7 +381,7 @@ impl OverviewRoot {
+             if let Some(data) = hypr_data.monitors.find_by_first(monitor_id) {
+                 // always update, maybe last client got removed
+                 let data = OverviewWindowData {
+-                    active,
++                    active: active.clone(),
+                     clients: mapped_cl.remove(monitor_id).unwrap_or_default(),
+                     workspaces: mapped_ws.remove(monitor_id).unwrap_or_default(),
+                     monitor: data.clone(),
+@@ -410,7 +410,7 @@ impl Default for OverviewData {
+         Self {
+             active: Active {
+                 client: None,
+-                workspace: -1,
++                workspace: String::new(),
+                 monitor: -1,
+             },
+             hypr_data: HyprlandData::default(),
+diff --git a/crates/windows-lib/src/overview/window.rs b/crates/windows-lib/src/overview/window.rs
+index 0297a47..0281a28 100644
+--- a/crates/windows-lib/src/overview/window.rs
++++ b/crates/windows-lib/src/overview/window.rs
+@@ -175,7 +175,7 @@ impl OverviewWindow {
+             lock.push_back(WorkspacesInit {
+                 monitor_data: data.monitor.clone(),
+                 remove_html: self.remove_html.clone(),
+-                id: *wid,
++                id: wid.clone(),
+                 data: workspace_data.clone(),
+                 scale,
+                 clients: workspace_clients,
+diff --git a/crates/windows-lib/src/shared/workspaces.rs b/crates/windows-lib/src/shared/workspaces.rs
+index 7334f2d..59f1236 100644
+--- a/crates/windows-lib/src/shared/workspaces.rs
++++ b/crates/windows-lib/src/shared/workspaces.rs
+@@ -1,7 +1,9 @@
+ use crate::shared::workspace_clients::{
+     WorkspaceClients, WorkspaceClientsInit, WorkspaceClientsInput, WorkspaceClientsOutput,
+ };
+-use core_lib::{ClientData, ClientId, MonitorData, WorkspaceData, WorkspaceId};
++use core_lib::{
++    ClientData, ClientId, MonitorData, WorkspaceData, WorkspaceId, is_special_workspace,
++};
+ use regex::Regex;
+ use relm4::adw::gtk;
+ use relm4::adw::prelude::*;
+@@ -53,7 +55,7 @@ impl FactoryComponent for Workspaces {
+         gtk::FlowBoxChild {
+             gtk::Box {
+                 #[watch]
+-                set_css_classes: &workspace_css_classes(self.active, self.workspace_id),
++                set_css_classes: &workspace_css_classes(self.active, &self.workspace_id),
+                 set_width_request: scale(self.monitor_data.width, self.scale),
+                 set_height_request: scale(self.monitor_data.height, self.scale),
+                 gtk::Frame {
+@@ -61,7 +63,7 @@ impl FactoryComponent for Workspaces {
+                     set_label_widget = &gtk::Button {
+                         set_cursor_from_name: Some("pointer"),
+                         set_width_request: scale(self.monitor_data.width, self.scale),
+-                        connect_clicked[sender, id = self.workspace_id] => move |_| sender.output_sender().emit(WorkspacesOutput::Clicked(id)),
++                        connect_clicked[sender, id = self.workspace_id.clone()] => move |_| sender.output_sender().emit(WorkspacesOutput::Clicked(id.clone())),
+                         gtk::Label {
+                             set_label: &self.workspace_label(),
+                         }
+@@ -155,13 +157,12 @@ fn scale<T: Into<f64>>(value: T, scale: f64) -> i32 {
+     (value.into() / (15f64 - scale)) as i32
+ }
+ 
+-fn workspace_css_classes(active: bool, id: WorkspaceId) -> Vec<&'static str> {
++fn workspace_css_classes(active: bool, address: &str) -> Vec<&'static str> {
+     let mut classes = vec!["workspace", "no-hover"];
+     if active {
+         classes.push("active");
+     }
+-    // Special workspaces have negative IDs
+-    if id < 0 {
++    if is_special_workspace(address) {
+         classes.push("special");
+     }
+     classes
+diff --git a/crates/windows-lib/src/sort.rs b/crates/windows-lib/src/sort.rs
+index d266d18..f04939c 100644
+--- a/crates/windows-lib/src/sort.rs
++++ b/crates/windows-lib/src/sort.rs
+@@ -1,4 +1,7 @@
+-use core_lib::{ClientData, ClientId, MonitorData, MonitorId, WorkspaceData, WorkspaceId};
++use core_lib::{
++    ClientData, ClientId, MonitorData, MonitorId, WorkspaceData, WorkspaceId, is_special_workspace,
++    workspace_sort_key,
++};
+ use std::cmp::Ordering;
+ use std::collections::{BTreeMap, HashMap, VecDeque};
+ 
+@@ -18,7 +21,7 @@ pub fn sort_clients_by_position(
+             presorted_clients
+                 .entry(client.monitor)
+                 .or_default()
+-                .entry(client.workspace)
++                .entry(client.workspace.clone())
+                 .or_default()
+                 .push((addr, client));
+         }
+@@ -126,7 +129,7 @@ pub fn sort_workspaces_by_recent(
+     let mut ordering = vec![];
+     for (_, client) in clients {
+         if !ordering.contains(&client.workspace) {
+-            ordering.push(client.workspace);
++            ordering.push(client.workspace.clone());
+         }
+     }
+ 
+@@ -161,18 +164,12 @@ pub fn sort_workspaces_by_position(
+             .position(|(id, _)| id == &b.monitor)
+             .unwrap_or(0);
+         match monitor_a.cmp(&monitor_b) {
+-            // move special workspaces with -ids after normal workspaces
+-            Ordering::Equal => {
+-                // -10 > 10
+-                if *a_id < 0 && *b_id > 0 {
+-                    return Ordering::Greater;
+-                }
+-                // 10 > -10
+-                if *a_id > 0 && *b_id < 0 {
+-                    return Ordering::Less;
+-                }
+-                a_id.cmp(b_id)
+-            }
++            // move special workspaces after normal workspaces
++            Ordering::Equal => match (is_special_workspace(a_id), is_special_workspace(b_id)) {
++                (true, false) => Ordering::Greater,
++                (false, true) => Ordering::Less,
++                _ => workspace_sort_key(a_id).cmp(&workspace_sort_key(b_id)),
++            },
+             other => other,
+         }
+     });
+diff --git a/crates/windows-lib/src/switch/root.rs b/crates/windows-lib/src/switch/root.rs
+index 286a261..c5cc06e 100644
+--- a/crates/windows-lib/src/switch/root.rs
++++ b/crates/windows-lib/src/switch/root.rs
+@@ -261,9 +261,9 @@ impl SwitchRoot {
+         self.window.grab_focus();
+ 
+         if self.switch.switch_workspaces {
+-            self.populate_workspace_mode(&hypr_data, self.general.scale, self.data.active);
++            self.populate_workspace_mode(&hypr_data, self.general.scale, self.data.active.clone());
+         } else {
+-            self.populate_clients_only_mode(&hypr_data, self.general.scale, self.data.active);
++            self.populate_clients_only_mode(&hypr_data, self.general.scale, self.data.active.clone());
+         }
+     }
+ 
+@@ -294,7 +294,7 @@ impl SwitchRoot {
+             lock.push_back(WorkspacesInit {
+                 monitor_data: monitor.clone(),
+                 remove_html: self.remove_html.clone(),
+-                id: *wid,
++                id: wid.clone(),
+                 data: workspace_data.clone(),
+                 scale,
+                 clients: workspace_clients,
+@@ -350,7 +350,7 @@ impl SwitchRoot {
+                 direction,
+                 true,
+                 &self.data.hypr_data,
+-                self.data.active,
++                self.data.active.clone(),
+                 self.general.items_per_row,
+             )
+         } else {
+@@ -358,13 +358,13 @@ impl SwitchRoot {
+                 direction,
+                 true,
+                 &self.data.hypr_data,
+-                self.data.active,
++                self.data.active.clone(),
+                 self.general.items_per_row,
+             )
+         };
+ 
+-        let old_active = self.data.active;
+-        self.data.active = new_active;
++        let old_active = self.data.active.clone();
++        self.data.active = new_active.clone();
+ 
+         if self.switch.switch_workspaces {
+             self.update_workspace_active(old_active, new_active);
+@@ -447,7 +447,7 @@ impl SwitchRoot {
+                     ControlFlow::Break
+                 });
+             } else {
+-                let id = self.data.active.workspace;
++                let id = self.data.active.workspace.clone();
+                 debug!(
+                     "Switching to workspace {}",
+                     self.data
+@@ -458,7 +458,7 @@ impl SwitchRoot {
+                         .map_or_else(|| "<Unknown>".to_string(), |(_, w)| w.name.clone())
+                 );
+                 glib::idle_add_local(move || {
+-                    if let Err(e) = switch_workspace(id) {
++                    if let Err(e) = switch_workspace(&id) {
+                         tracing::warn!("Failed to switch to workspace {id:?}: {e}");
+                     }
+                     ControlFlow::Break
+@@ -485,7 +485,7 @@ impl SwitchRoot {
+     }
+ 
+     fn kill_workspace_clients(&self) {
+-        let workspace_id = self.data.active.workspace;
++        let workspace_id = self.data.active.workspace.clone();
+         debug!(
+             "Killing all clients in workspace {}",
+             self.data
+@@ -532,18 +532,18 @@ impl SwitchRoot {
+             }
+         };
+ 
+-        while match self.data.active {
++        while match &self.data.active {
+             Active {
+                 client: Some(id), ..
+-            } => hypr_data.clients.find_by_first(&id).is_none(),
+-            Active { workspace: id, .. } => hypr_data.workspaces.find_by_first(&id).is_none(),
++            } => hypr_data.clients.find_by_first(id).is_none(),
++            Active { workspace: id, .. } => hypr_data.workspaces.find_by_first(id).is_none(),
+         } {
+             self.data.active = if self.switch.switch_workspaces {
+                 find_next_workspace(
+                     Direction::Right,
+                     true,
+                     &hypr_data,
+-                    self.data.active,
++                    self.data.active.clone(),
+                     self.general.items_per_row,
+                 )
+             } else {
+@@ -551,21 +551,21 @@ impl SwitchRoot {
+                     Direction::Right,
+                     true,
+                     &hypr_data,
+-                    self.data.active,
++                    self.data.active.clone(),
+                     self.general.items_per_row,
+                 )
+             };
+         }
+ 
+         self.data = SwitchData {
+-            active: self.data.active,
++            active: self.data.active.clone(),
+             hypr_data: hypr_data.clone(),
+         };
+ 
+         if self.switch.switch_workspaces {
+-            self.populate_workspace_mode(&hypr_data, self.general.scale, self.data.active);
++            self.populate_workspace_mode(&hypr_data, self.general.scale, self.data.active.clone());
+         } else {
+-            self.populate_clients_only_mode(&hypr_data, self.general.scale, self.data.active);
++            self.populate_clients_only_mode(&hypr_data, self.general.scale, self.data.active.clone());
+         }
+     }
+ }
+@@ -628,7 +628,7 @@ impl Default for SwitchData {
+         Self {
+             active: Active {
+                 client: None,
+-                workspace: -1,
++                workspace: String::new(),
+                 monitor: -1,
+             },
+             hypr_data: HyprlandData::default(),
+diff --git a/dep-crates/hyprland-rs/src/data/regular.rs b/dep-crates/hyprland-rs/src/data/regular.rs
+index 2540aab..c88cb3f 100644
+--- a/dep-crates/hyprland-rs/src/data/regular.rs
++++ b/dep-crates/hyprland-rs/src/data/regular.rs
+@@ -36,14 +36,62 @@ pub(crate) enum DataCommands {
+ }
+ 
+ /// This struct holds a basic identifier for a workspace often used in other structs
++///
++/// Since Hyprland 0.57 workspaces are identified by their [`address`](Self::address),
++/// the numeric `id` only exists for numbered workspaces.
++/// Output of older versions is converted, so `address` is always filled (empty means no workspace)
+ #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
++#[serde(from = "RawWorkspaceBasic")]
+ pub struct WorkspaceBasic {
+-    /// The workspace Id
+-    pub id: WorkspaceId,
+-    /// The workspace's name
++    /// The workspace Id, only available for numbered workspaces
++    pub id: Option<WorkspaceId>,
++    /// The stable address of the workspace (`3`, `foo`, `special:foo`), empty if there is no workspace
++    pub address: String,
++    /// The kind of the workspace
++    #[serde(rename = "type")]
++    pub kind: WorkspaceKind,
++    /// The workspace's (display) name
+     pub name: String,
+ }
+ 
++#[derive(Deserialize)]
++struct RawWorkspaceBasic {
++    #[serde(default)]
++    id: Option<WorkspaceId>,
++    #[serde(default)]
++    address: Option<String>,
++    #[serde(default, rename = "type")]
++    kind: Option<String>,
++    #[serde(default)]
++    name: String,
++}
++
++impl From<RawWorkspaceBasic> for WorkspaceBasic {
++    fn from(raw: RawWorkspaceBasic) -> Self {
++        let (address, kind) =
++            resolve_workspace_identity(raw.id, raw.address, raw.kind.as_deref(), &raw.name);
++        Self {
++            id: raw.id,
++            address,
++            kind,
++            name: raw.name,
++        }
++    }
++}
++
++impl WorkspaceBasic {
++    /// Is this a special workspace
++    #[must_use]
++    pub fn is_special(&self) -> bool {
++        self.kind == WorkspaceKind::Special
++    }
++    /// The selector to use in dispatchers to select this workspace
++    #[must_use]
++    pub fn selector(&self) -> String {
++        workspace_selector(&self.address, self.kind)
++    }
++}
++
+ /// This enum provides the different monitor transforms
+ #[derive(Serialize_repr, Deserialize_repr, Debug, Clone, PartialEq, Eq, Copy)]
+ #[repr(u8)]
+@@ -151,11 +199,21 @@ create_data_struct!(
+ );
+ 
+ /// This struct holds information for a workspace
++///
++/// Since Hyprland 0.57 workspaces are identified by their [`address`](Self::address),
++/// the numeric `id` only exists for numbered workspaces.
++/// Output of older versions is converted, so `address` is always filled (empty means invalid workspace)
+ #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
++#[serde(from = "RawWorkspace")]
+ pub struct Workspace {
+-    /// The workspace Id
+-    pub id: WorkspaceId,
+-    /// The workspace's name
++    /// The workspace Id, only available for numbered workspaces
++    pub id: Option<WorkspaceId>,
++    /// The stable address of the workspace (`3`, `foo`, `special:foo`)
++    pub address: String,
++    /// The kind of the workspace
++    #[serde(rename = "type")]
++    pub kind: WorkspaceKind,
++    /// The workspace's (display) name
+     pub name: String,
+     /// The monitor the workspace is on
+     pub monitor: String,
+@@ -175,6 +233,59 @@ pub struct Workspace {
+     pub last_window_title: String,
+ }
+ 
++#[derive(Deserialize)]
++struct RawWorkspace {
++    #[serde(default)]
++    id: Option<WorkspaceId>,
++    #[serde(default)]
++    address: Option<String>,
++    #[serde(default, rename = "type")]
++    kind: Option<String>,
++    name: String,
++    monitor: String,
++    #[serde(rename = "monitorID")]
++    monitor_id: Option<MonitorId>,
++    windows: u16,
++    #[serde(rename = "hasfullscreen")]
++    fullscreen: bool,
++    #[serde(rename = "lastwindow")]
++    last_window: Address,
++    #[serde(rename = "lastwindowtitle")]
++    last_window_title: String,
++}
++
++impl From<RawWorkspace> for Workspace {
++    fn from(raw: RawWorkspace) -> Self {
++        let (address, kind) =
++            resolve_workspace_identity(raw.id, raw.address, raw.kind.as_deref(), &raw.name);
++        Self {
++            id: raw.id,
++            address,
++            kind,
++            name: raw.name,
++            monitor: raw.monitor,
++            monitor_id: raw.monitor_id,
++            windows: raw.windows,
++            fullscreen: raw.fullscreen,
++            last_window: raw.last_window,
++            last_window_title: raw.last_window_title,
++        }
++    }
++}
++
++impl Workspace {
++    /// Is this a special workspace
++    #[must_use]
++    pub fn is_special(&self) -> bool {
++        self.kind == WorkspaceKind::Special
++    }
++    /// The selector to use in dispatchers to select this workspace
++    #[must_use]
++    pub fn selector(&self) -> String {
++        workspace_selector(&self.address, self.kind)
++    }
++}
++
+ impl HyprDataActive for Workspace {
+     fn get_active() -> crate::Result<Self> {
+         Self::instance_get_active(default_instance()?)
+@@ -738,3 +849,61 @@ create_data_struct!(
+     holding_type: WorkspaceRuleset,
+     doc: "This struct holds a vector of workspace rules per workspace"
+ );
++
++#[cfg(test)]
++mod workspace_identity_tests {
++    use super::*;
++
++    const REST: &str = r#""monitor":"DP-1","monitorID":0,"windows":1,"hasfullscreen":false,"lastwindow":"0x1","lastwindowtitle":"t""#;
++
++    fn parse(head: &str) -> Workspace {
++        serde_json::from_str(&format!("{{{head},{REST}}}")).unwrap()
++    }
++
++    #[test]
++    fn v057_numbered() {
++        let w = parse(r#""address":"3","id":3,"type":"normal","name":"3""#);
++        assert_eq!(w.id, Some(3));
++        assert_eq!(w.address, "3");
++        assert_eq!(w.kind, WorkspaceKind::Normal);
++        assert_eq!(w.selector(), "3");
++    }
++
++    #[test]
++    fn v057_named_has_no_id() {
++        let w = parse(r#""address":"web","type":"normal","name":"Web""#);
++        assert_eq!(w.id, None);
++        assert_eq!(w.address, "web");
++        assert!(!w.is_special());
++        assert_eq!(w.selector(), "name:web");
++    }
++
++    #[test]
++    fn v057_special_has_no_id() {
++        let w = parse(r#""address":"special:term","type":"special","name":"special:term""#);
++        assert_eq!(w.id, None);
++        assert!(w.is_special());
++        assert_eq!(w.selector(), "special:term");
++    }
++
++    #[test]
++    fn legacy_numbered_and_special() {
++        let w = parse(r#""id":2,"name":"two""#);
++        assert_eq!((w.id, w.address.as_str(), w.kind), (Some(2), "2", WorkspaceKind::Normal));
++        let w = parse(r#""id":-98,"name":"special:term""#);
++        assert_eq!(w.address, "special:term");
++        assert!(w.is_special());
++    }
++
++    #[test]
++    fn unused_special_workspace_of_monitor() {
++        // 0.57 sends this for monitors without an active special workspace
++        let w: WorkspaceBasic =
++            serde_json::from_str(r#"{"address":"","type":"","name":""}"#).unwrap();
++        assert_eq!(w.id, None);
++        assert!(w.address.is_empty());
++        // legacy
++        let w: WorkspaceBasic = serde_json::from_str(r#"{"id":0,"name":""}"#).unwrap();
++        assert!(w.address.is_empty());
++    }
++}
+diff --git a/dep-crates/hyprland-rs/src/event_listener/shared.rs b/dep-crates/hyprland-rs/src/event_listener/shared.rs
+index 3445c30..40398e4 100644
+--- a/dep-crates/hyprland-rs/src/event_listener/shared.rs
++++ b/dep-crates/hyprland-rs/src/event_listener/shared.rs
+@@ -254,8 +254,10 @@ pub struct ScreencastEventData {
+ pub struct WindowMoveEvent {
+     /// Window address
+     pub window_address: Address,
+-    /// the workspace id
+-    pub workspace_id: WorkspaceId,
++    /// the workspace id, only available for numbered workspaces
++    pub workspace_id: Option<WorkspaceId>,
++    /// the stable workspace address (`3`, `foo`, `special:foo`)
++    pub workspace_address: String,
+     /// The workspace name
+     pub workspace_name: WorkspaceType,
+ }
+@@ -417,8 +419,10 @@ pub(crate) async fn execute_closure_async<T>(f: &AsyncClosure<T>, val: T) {
+ pub struct WorkspaceEventData {
+     /// The workspace name
+     pub name: WorkspaceType,
+-    /// The window id
+-    pub id: WorkspaceId,
++    /// The workspace id, only available for numbered workspaces
++    pub id: Option<WorkspaceId>,
++    /// The stable workspace address (`3`, `foo`, `special:foo`)
++    pub address: String,
+ }
+ 
+ /// This struct holds workspace event data
+@@ -427,8 +431,10 @@ pub struct WorkspaceEventData {
+ pub struct NonSpecialWorkspaceEventData {
+     /// The workspace name
+     pub name: String,
+-    /// The window id
+-    pub id: WorkspaceId,
++    /// The workspace id, only available for numbered workspaces
++    pub id: Option<WorkspaceId>,
++    /// The stable workspace address (`3` or `foo`)
++    pub address: String,
+ }
+ 
+ /// This struct holds workspace moved event data
+@@ -436,8 +442,10 @@ pub struct NonSpecialWorkspaceEventData {
+ pub struct WorkspaceMovedEventData {
+     /// The workspace name
+     pub name: WorkspaceType,
+-    /// The window id
+-    pub id: WorkspaceId,
++    /// The workspace id, only available for numbered workspaces
++    pub id: Option<WorkspaceId>,
++    /// The stable workspace address (`3`, `foo`, `special:foo`)
++    pub address: String,
+     /// The monitor name
+     pub monitor: String,
+ }
+@@ -642,6 +650,22 @@ pub enum Event {
+     WindowMovedOutOfGroup(Address),
+ }
+ 
++/// Parses the first field of the workspace `*v2` events.
++///
++/// Hyprland 0.57 sends the workspace address (`3`, `foo`, `special:foo`),
++/// older versions send the numeric id (negative for special workspaces).
++/// Returns the numeric id (only for numbered workspaces) and the address
++fn parse_workspace_ref(first: &str, name: &str) -> (Option<WorkspaceId>, String) {
++    match first.parse::<WorkspaceId>() {
++        Ok(id) if id > 0 => (Some(id), id.to_string()),
++        // legacy special workspace, the name is `special:foo`
++        Ok(id) if id < -1 => (None, name.to_string()),
++        // legacy invalid workspace (-1) or `0`
++        Ok(_) => (None, String::new()),
++        Err(_) => (None, first.to_string()),
++    }
++}
++
+ fn parse_string_as_work(str: String) -> WorkspaceType {
+     if str == "special" {
+         WorkspaceType::Special(None)
+@@ -814,31 +838,43 @@ pub(crate) fn event_parser(event: &str) -> crate::Result<Vec<Event>> {
+         Ok(Either::Right((name, args))) => Ok(Event::Unknown(UnknownEventData { name, args })),
+         Ok(Either::Left((event_type, args))) => match event_type {
+             ParsedEventType::WorkspaceChangedV2 => {
++                let (id, address) = parse_workspace_ref(get![ref args;0], get![ref args;1]);
+                 Ok(Event::WorkspaceChanged(WorkspaceEventData {
+-                    id: parse_int!(get![ref args;0], event: "WorkspaceChangedV2"),
++                    id,
++                    address,
+                     name: parse_string_as_work(get![args;1]),
+                 }))
+             }
+             ParsedEventType::WorkspaceDeletedV2 => {
++                let (id, address) = parse_workspace_ref(get![ref args;0], get![ref args;1]);
+                 Ok(Event::WorkspaceDeleted(WorkspaceEventData {
+-                    id: parse_int!(get![ref args;0], event: "WorkspaceDeletedV2"),
++                    id,
++                    address,
++                    name: parse_string_as_work(get![args;1]),
++                }))
++            }
++            ParsedEventType::WorkspaceAddedV2 => {
++                let (id, address) = parse_workspace_ref(get![ref args;0], get![ref args;1]);
++                Ok(Event::WorkspaceAdded(WorkspaceEventData {
++                    id,
++                    address,
+                     name: parse_string_as_work(get![args;1]),
+                 }))
+             }
+-            ParsedEventType::WorkspaceAddedV2 => Ok(Event::WorkspaceAdded(WorkspaceEventData {
+-                id: parse_int!(get![ref args;0], event: "WorkspaceAddedV2"),
+-                name: parse_string_as_work(get![args;1]),
+-            })),
+             ParsedEventType::WorkspaceMovedV2 => {
++                let (id, address) = parse_workspace_ref(get![ref args;0], get![ref args;1]);
+                 Ok(Event::WorkspaceMoved(WorkspaceMovedEventData {
+-                    id: parse_int!(get![ref args;0], event: "WorkspaceMovedV2"),
++                    id,
++                    address,
+                     name: parse_string_as_work(get![args;1]),
+                     monitor: get![args;2],
+                 }))
+             }
+             ParsedEventType::WorkspaceRename => {
++                let (id, address) = parse_workspace_ref(get![ref args;0], get![ref args;1]);
+                 Ok(Event::WorkspaceRenamed(NonSpecialWorkspaceEventData {
+-                    id: parse_int!(get![args;0], event: "WorkspaceRenamed"),
++                    id,
++                    address,
+                     name: get![args;1],
+                 }))
+             }
+@@ -888,11 +924,16 @@ pub(crate) fn event_parser(event: &str) -> crate::Result<Vec<Event>> {
+                 window_title: get![args;3],
+             })),
+             ParsedEventType::WindowClosed => Ok(Event::WindowClosed(Address::new(get![args;0]))),
+-            ParsedEventType::WindowMovedV2 => Ok(Event::WindowMoved(WindowMoveEvent {
+-                window_address: Address::fmt_new(get![ref args;0]),
+-                workspace_id: parse_int!(get![ref args;1], event: "WindowMoved"),
+-                workspace_name: parse_string_as_work(get![args;2]),
+-            })),
++            ParsedEventType::WindowMovedV2 => {
++                let (workspace_id, workspace_address) =
++                    parse_workspace_ref(get![ref args;1], get![ref args;2]);
++                Ok(Event::WindowMoved(WindowMoveEvent {
++                    window_address: Address::fmt_new(get![ref args;0]),
++                    workspace_id,
++                    workspace_address,
++                    workspace_name: parse_string_as_work(get![args;2]),
++                }))
++            }
+             ParsedEventType::ActiveSpecial => {
+                 let workspace_name = get![args;0];
+                 let monitor_name = get![args;1];
+@@ -968,3 +1009,45 @@ pub(crate) fn event_parser(event: &str) -> crate::Result<Vec<Event>> {
+ 
+     Ok(events)
+ }
++
++#[cfg(test)]
++mod workspace_event_tests {
++    use super::*;
++
++    fn workspace_added(line: &str) -> WorkspaceEventData {
++        match event_parser(line).unwrap().remove(0) {
++            Event::WorkspaceAdded(data) => data,
++            other => panic!("unexpected event {other:?}"),
++        }
++    }
++
++    #[test]
++    fn numbered_named_and_special_addresses() {
++        let data = workspace_added("createworkspacev2>>3,3");
++        assert_eq!((data.id, data.address.as_str()), (Some(3), "3"));
++        let data = workspace_added("createworkspacev2>>web,Web");
++        assert_eq!((data.id, data.address.as_str()), (None, "web"));
++        let data = workspace_added("createworkspacev2>>special:term,special:term");
++        assert_eq!((data.id, data.address.as_str()), (None, "special:term"));
++        assert_eq!(data.name, WorkspaceType::Special(Some("term".to_string())));
++    }
++
++    #[test]
++    fn legacy_ids_still_parse() {
++        let data = workspace_added("createworkspacev2>>5,five");
++        assert_eq!((data.id, data.address.as_str()), (Some(5), "5"));
++        let data = workspace_added("createworkspacev2>>-98,special:term");
++        assert_eq!((data.id, data.address.as_str()), (None, "special:term"));
++    }
++
++    #[test]
++    fn window_moved_to_named_workspace() {
++        match event_parser("movewindowv2>>1a2b,web,Web").unwrap().remove(0) {
++            Event::WindowMoved(data) => {
++                assert_eq!(data.workspace_id, None);
++                assert_eq!(data.workspace_address, "web");
++            }
++            other => panic!("unexpected event {other:?}"),
++        }
++    }
++}
+diff --git a/dep-crates/hyprland-rs/src/shared.rs b/dep-crates/hyprland-rs/src/shared.rs
+index ccb696f..bbe68f3 100644
+--- a/dep-crates/hyprland-rs/src/shared.rs
++++ b/dep-crates/hyprland-rs/src/shared.rs
+@@ -106,6 +106,58 @@ pub trait HyprDataActiveOptional {
+ /// > its a type because it might change at some point
+ pub type WorkspaceId = i32;
+ 
++/// The kind of a workspace as reported by Hyprland (`type` field, 0.57+)
++#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
++#[serde(rename_all = "lowercase")]
++pub enum WorkspaceKind {
++    /// A regular workspace, either numbered or named
++    #[default]
++    Normal,
++    /// A special workspace (scratchpad)
++    Special,
++}
++
++/// Works out the stable address and the kind of a workspace.
++///
++/// Hyprland 0.57 removed the global numeric id: workspaces are identified by an
++/// `address` (`3`, `foo` or `special:foo`) and `id` only exists for numbered workspaces.
++/// Older versions only send `id` (negative for special workspaces) and `name`.
++/// For those the address is derived (`id` for regular workspaces, `name` for special ones),
++/// an empty address means "no workspace" (unused special workspace, invalid workspace)
++pub(crate) fn resolve_workspace_identity(
++    id: Option<WorkspaceId>,
++    address: Option<String>,
++    kind: Option<&str>,
++    name: &str,
++) -> (String, WorkspaceKind) {
++    if let Some(address) = address {
++        let kind = if kind == Some("special") || address.starts_with("special:") {
++            WorkspaceKind::Special
++        } else {
++            WorkspaceKind::Normal
++        };
++        return (address, kind);
++    }
++    match id {
++        Some(id) if id > 0 => (id.to_string(), WorkspaceKind::Normal),
++        Some(id) if id < -1 => (name.to_string(), WorkspaceKind::Special),
++        _ => (String::new(), WorkspaceKind::Normal),
++    }
++}
++
++/// Returns the selector that can be passed to workspace dispatchers for a workspace address
++///
++/// numbered workspaces are selected by number, named ones need the `name:` prefix
++/// and special ones are already prefixed with `special:`
++#[must_use]
++pub fn workspace_selector(address: &str, kind: WorkspaceKind) -> String {
++    match kind {
++        WorkspaceKind::Special => address.to_string(),
++        WorkspaceKind::Normal if address.parse::<u32>().is_ok() => address.to_string(),
++        WorkspaceKind::Normal => format!("name:{address}"),
++    }
++}
++
+ /// This type provides the id used to identify monitors
+ /// > its a type because it might change at some point
+ pub type MonitorId = i128;
+-- 
+2.43.0
+
