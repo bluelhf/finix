@@ -22,6 +22,12 @@ in
       hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1.5 })
 
       hl.config({
+        general = {
+          col = {
+            active_border = "rgb(b4befe)",
+            inactive_border = "rgb(313244)",
+          },
+        },
         input = { kb_layout = ${layout} },
         ${lib.optionalString osConfig.local.display.softwareCursor
           "cursor = { no_hardware_cursors = true },"}
