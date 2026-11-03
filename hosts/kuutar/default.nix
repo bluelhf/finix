@@ -18,6 +18,7 @@
     ../../profiles/console.nix
     ../../profiles/fonts.nix
     ../../profiles/desktop.nix
+    ../../profiles/theme.nix
     ../../profiles/power.nix
     ../../profiles/greeter.nix
     ../../profiles/tools.nix

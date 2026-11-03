@@ -13,6 +13,7 @@
     ./launcher.nix
     ./screenshot.nix
     ./switcher.nix
+    ./theme.nix
     ./nix-tools.nix
   ];
 

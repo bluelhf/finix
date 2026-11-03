@@ -82,7 +82,7 @@ in
       ''}
 
       hl.on("hyprland.start", function()
-        hl.exec_cmd("${pkgs.dbus}/bin/dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE")
+        hl.exec_cmd("${pkgs.dbus}/bin/dbus-update-activation-environment GSETTINGS_BACKEND WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE")
         hl.exec_cmd("${lib.getExe (pkgs.callPackage ../../../packages/hyprshell.nix { })} run")
       end)
 
