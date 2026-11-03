@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 3 Nov 2026 18:00:00 +0000
+Subject: [PATCH] fix: alt+tab switcher closes reliably on fast taps
+
+Hyprland 0.57 never delivers the `ALT + Alt_L` release binds, so the switcher
+only closed on Esc.
+
+- Close (and switch) when the focused switch window sees the modifier released.
+- On a fast tap the modifier is already up before the window is focused: once
+  the window is active, check the seat's modifier state and close if not held.
+- Don't make the open binds repeating, so holding tab after releasing alt does
+  not reopen the switcher.
+
+Applies on top of hyprshell-hyprland-0.57-compat.patch. Not compiled or tested.
+---
+diff --git a/crates/exec-lib/src/binds.rs b/crates/exec-lib/src/binds.rs
+index 9bc3d67..b4aff97 100644
+--- a/crates/exec-lib/src/binds.rs
++++ b/crates/exec-lib/src/binds.rs
+@@ -98,7 +98,6 @@ pub fn apply_exec_bind_lua(bind: &ExecBind) -> anyhow::Result<()> {
+         } else {
+             vec![
+                 Flag::AutoConsuming,
+-                Flag::Repeating,
+                 Flag::Description(bind.desc.clone()),
+             ]
+         },
+@@ -131,7 +130,7 @@ pub fn apply_exec_bind_legacy(bind: &ExecBind) -> anyhow::Result<()> {
+         flags: if bind.release {
+             &[binds::Flag::r, binds::Flag::t]
+         } else {
+-            &[binds::Flag::e]
++            &[]
+         },
+         dispatcher: DispatchType::Exec(&bind.exec),
+     };
+diff --git a/crates/windows-lib/src/switch/root.rs b/crates/windows-lib/src/switch/root.rs
+index c5cc06e..e8828eb 100644
+--- a/crates/windows-lib/src/switch/root.rs
++++ b/crates/windows-lib/src/switch/root.rs
+@@ -18,6 +18,21 @@ use tracing::{debug, error, trace};
+ 
+ const KILL_TIMEOUT: Duration = Duration::from_millis(200);
+ 
++/// Whether the switch modifier is held on the default seat's keyboard (`true` if unknown).
++fn modifier_held(modifier: config_lib::Modifier) -> bool {
++    use relm4::gtk::gdk::ModifierType;
++    let mask = match modifier {
++        config_lib::Modifier::Alt => ModifierType::ALT_MASK,
++        config_lib::Modifier::Ctrl => ModifierType::CONTROL_MASK,
++        config_lib::Modifier::Super => ModifierType::SUPER_MASK,
++        config_lib::Modifier::None => return true,
++    };
++    relm4::gtk::gdk::Display::default()
++        .and_then(|d| d.default_seat())
++        .and_then(|s| s.keyboard())
++        .is_none_or(|kb| kb.modifier_state().contains(mask))
++}
++
+ #[derive(Debug)]
+ pub struct SwitchRoot {
+     general: config_lib::WindowsGeneral,
+@@ -156,6 +171,7 @@ impl SimpleComponent for SwitchRoot {
+                 } else {
+                     self.open = true;
+                     self.open_switch(direction);
++                    self.close_if_modifier_released(&sender);
+                 }
+             }
+             SwitchRootInput::Switch(direction) => {
+@@ -203,6 +219,20 @@ impl SwitchRoot {
+                     trace!("Key pressed: {:?}", key);
+                     handle_key(key, k, kk, &sender_2.clone())
+                 });
++                // The window has exclusive keyboard focus while open, so it sees the modifier
++                // release itself; hyprland's release binds never fire on 0.57.
++                let mods = [
++                    Key::from_name(self.switch.modifier.to_keysym_l()),
++                    Key::from_name(self.switch.modifier.to_keysym_r()),
++                ];
++                let sender_3 = sender.clone();
++                key_controller.connect_key_released(move |_, key, _, _| {
++                    if mods.contains(&Some(key)) {
++                        sender_3
++                            .input_sender()
++                            .emit(SwitchRootInput::CloseSwitch(true));
++                    }
++                });
+                 if let Some(controller) = self.controller.take() {
+                     self.window.remove_controller(&controller);
+                 }
+@@ -215,6 +245,28 @@ impl SwitchRoot {
+         }
+     }
+ 
++    /// On a fast tap the modifier is already up before the window is focused, so no release is
++    /// ever seen. Once focused the compositor reports the real modifier state: check it then.
++    fn close_if_modifier_released(&self, sender: &ComponentSender<Self>) {
++        let modifier = self.switch.modifier;
++        let window = self.window.clone();
++        let sender = sender.clone();
++        let mut polls = 0;
++        glib::timeout_add_local(Duration::from_millis(25), move || {
++            polls += 1;
++            if !window.is_visible() {
++                return ControlFlow::Break;
++            }
++            if !window.is_active() && polls < 20 {
++                return ControlFlow::Continue;
++            }
++            if !modifier_held(modifier) {
++                sender.input_sender().emit(SwitchRootInput::CloseSwitch(true));
++            }
++            ControlFlow::Break
++        });
++    }
++
+     fn open_switch(&mut self, direction: Direction) {
+         let (hypr_data, active_prev) = match collect_data(&SortConfig {
+             filter_current_monitor: self.switch.filter_by_current_monitor,
