@@ -22,6 +22,13 @@
     description = "screenshot command, takes `screen` or `region` as its argument";
   };
 
+  options.local.apps.bar = lib.mkOption {
+    type = with lib.types; nullOr str;
+    default = null;
+    example = "waybar";
+    description = "status bar command, started with the session and expected to keep running";
+  };
+
   options.local.apps.wallpaper = lib.mkOption {
     type = with lib.types; nullOr str;
     default = null;

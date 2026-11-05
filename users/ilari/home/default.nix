@@ -15,6 +15,7 @@
     ./switcher.nix
     ./theme.nix
     ./wallpaper.nix
+    ./waybar.nix
     ./nix-tools.nix
   ];
 

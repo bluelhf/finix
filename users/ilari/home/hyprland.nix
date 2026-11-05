@@ -5,6 +5,7 @@ let
   launcher = config.local.apps.launcher;
   screenshot = config.local.apps.screenshot;
   wallpaper = config.local.apps.wallpaper;
+  bar = config.local.apps.bar;
   layout = builtins.toJSON osConfig.local.keyboardLayout;
   audio = lib.attrByPath [ "programs" "wireplumber" "enable" ] false osConfig;
   wpctl = "${osConfig.programs.wireplumber.package}/bin/wpctl";
@@ -87,6 +88,8 @@ in
         hl.exec_cmd("${lib.getExe (pkgs.callPackage ../../../packages/hyprshell.nix { })} run")
         ${lib.optionalString (wallpaper != null)
           ''hl.exec_cmd(${builtins.toJSON wallpaper})''}
+        ${lib.optionalString (bar != null)
+          ''hl.exec_cmd(${builtins.toJSON bar})''}
       end)
 
       hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
