@@ -22,6 +22,7 @@
     ../../profiles/power.nix
     ../../profiles/greeter.nix
     ../../profiles/tools.nix
+    ../../profiles/sdr.nix
 
     # users
     ../../users/ilari/account.nix
@@ -35,5 +36,6 @@
     "wheel"
     "video" "seat" "input"
     "networkmanager"
+    "plugdev"
   ];
 }
