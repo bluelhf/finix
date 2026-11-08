@@ -25,6 +25,7 @@
                 "intellij-idea"
                 "webstorm"
                 "rust-rover"
+                "claude-code"
               ];
           };
         in
