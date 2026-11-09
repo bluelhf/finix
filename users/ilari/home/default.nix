@@ -9,6 +9,7 @@
     ./browser.nix
     ./chat.nix
     ./dev
+    ./games
     ./hyprland.nix
     ./launcher.nix
     ./screenshot.nix
