@@ -21,6 +21,7 @@
     ../../profiles/theme.nix
     ../../profiles/power.nix
     ../../profiles/greeter.nix
+    ../../profiles/keyring.nix
     ../../profiles/tools.nix
     ../../profiles/sdr.nix
 

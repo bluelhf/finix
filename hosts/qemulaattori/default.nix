@@ -16,6 +16,7 @@
     ../../profiles/desktop.nix
     ../../profiles/theme.nix
     ../../profiles/greeter.nix
+    ../../profiles/keyring.nix
     ../../profiles/tools.nix
 
     # users
