@@ -1,5 +1,8 @@
 { pkgs, ... }:
 
 {
-  home.packages = [ pkgs.vesktop ];
+  home.packages = [
+    pkgs.vesktop
+    pkgs.fluffychat
+  ];
 }
