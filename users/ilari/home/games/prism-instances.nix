@@ -45,6 +45,16 @@ in
               description = "jdk the instance runs on, prism picks one itself when null";
             };
 
+            settings = lib.mkOption {
+              type = lib.types.attrsOf lib.types.str;
+              default = { };
+              example = {
+                fov = "1.0";
+                fullscreen = "true";
+              };
+              description = "options.txt entries set on every activation, other entries are kept";
+            };
+
             src = lib.mkOption {
               type = lib.types.str;
               description = ''
@@ -63,6 +73,10 @@ in
     id: inst:
     let
       dir = "${root}/${id}";
+      options = "${dir}/minecraft/options.txt";
+      settings = pkgs.writeText "options.txt" (
+        lib.concatStrings (lib.mapAttrsToList (k: v: "${k}:${v}\n") inst.settings)
+      );
     in
     lib.nameValuePair "prismInstance-${id}" (
       lib.hm.dag.entryAfter [ "writeBoundary" ] ''
@@ -79,6 +93,21 @@ in
         run find "${dir}/minecraft" -type l -lname '/nix/store/*' -delete
         run cp -rs --no-preserve=mode ${inst.src}/links/. "${dir}/minecraft/"
         run install -m644 ${pkgs.writeText "allowed_symlinks.txt" "[prefix]/nix/store/\n"} "${dir}/minecraft/allowed_symlinks.txt"
+        ${lib.optionalString (inst.settings != { }) ''
+          base=/dev/null
+          for f in "${options}" ${inst.src}/overrides/config/modpack_defaults/options.txt; do
+            if [ -e "$f" ]; then base=$f; break; fi
+          done
+          merged=$(mktemp)
+          ${lib.getExe pkgs.gawk} -F: '
+            NR == FNR { k = $1; sub(/^[^:]*:/, ""); set[k] = $0; keys[n++] = k; next }
+            $1 in set { print $1 ":" set[$1]; done[$1] = 1; next }
+            { print }
+            END { for (i = 0; i < n; i++) if (!(keys[i] in done)) print keys[i] ":" set[keys[i]] }
+          ' ${settings} "$base" > "$merged"
+          run install -m644 "$merged" "${options}"
+          rm -f "$merged"
+        ''}
       ''
     )
   ) cfg;
