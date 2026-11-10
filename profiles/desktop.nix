@@ -13,6 +13,8 @@
 
   hardware.graphics.enable = true;
 
+  environment.systemPackages = [ pkgs.xwayland ];
+
   xdg.portal = {
     enable = true;
     portals = with pkgs; [
