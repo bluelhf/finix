@@ -8,6 +8,7 @@
     rustfmt
     rust-analyzer
     gcc
+    (callPackage ../../../../packages/runzip.nix { })
   ];
 
   home.sessionVariables.RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
