@@ -13,18 +13,14 @@ let
     "@nm-connection-editor@" = lib.getExe' pkgs.networkmanagerapplet "nm-connection-editor";
     "@hyprctl@" = lib.getExe' osConfig.programs.hyprland.package "hyprctl";
   };
-
-  waybar = pkgs.waybar.overrideAttrs (old: {
-    patches = (old.patches or [ ]) ++ [ ../../../patches/waybar-hyprland-lua-dispatch.patch ];
-  });
 in
 {
-  home.packages = [ waybar ];
+  home.packages = [ pkgs.waybar ];
 
   xdg.configFile."waybar/config.jsonc".text =
     lib.replaceStrings (lib.attrNames commands) (lib.attrValues commands)
       (builtins.readFile ./waybar/config.jsonc);
   xdg.configFile."waybar/style.css".source = ./waybar/style.css;
 
-  local.apps.bar = lib.getExe waybar;
+  local.apps.bar = lib.getExe pkgs.waybar;
 }
