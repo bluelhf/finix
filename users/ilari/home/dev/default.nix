@@ -6,5 +6,6 @@
     ./java.nix
     ./jetbrains.nix
     ./claude-code.nix
+    ./git.nix
   ];
 }
