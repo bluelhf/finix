@@ -7,5 +7,6 @@
     ./jetbrains.nix
     ./claude-code.nix
     ./git.nix
+    ./gh.nix
   ];
 }
