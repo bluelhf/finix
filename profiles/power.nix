@@ -10,6 +10,7 @@
   programs.zzz.enable = true;
 
   services.tlp = {
+    enable = true;
     settings = {
       INTEL_GPU_MIN_FREQ_ON_AC = 600;
 
