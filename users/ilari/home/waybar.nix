@@ -1,6 +1,8 @@
 { config, lib, pkgs, osConfig, ... }:
 
 let
+  waybar = pkgs.callPackage ../../../packages/waybar.nix { };
+
   audio = lib.attrByPath [ "programs" "wireplumber" "enable" ] false osConfig;
 
   commands = {
@@ -15,12 +17,12 @@ let
   };
 in
 {
-  home.packages = [ pkgs.waybar ];
+  home.packages = [ waybar ];
 
   xdg.configFile."waybar/config.jsonc".text =
     lib.replaceStrings (lib.attrNames commands) (lib.attrValues commands)
       (builtins.readFile ./waybar/config.jsonc);
   xdg.configFile."waybar/style.css".source = ./waybar/style.css;
 
-  local.apps.bar = lib.getExe pkgs.waybar;
+  local.apps.bar = lib.getExe waybar;
 }

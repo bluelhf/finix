@@ -119,7 +119,7 @@
             "󰂂",
             "󰁹"
         ],
-        "tooltip-format": "Battery: {capacity}% / {health}%\nPower: {power:.1f}W\nTime: {timeTo}"
+        "tooltip-format": "Battery: {capacity}% / {health:.0f}%\nPower: {power:.1f}W\nTime: {timeTo}"
     },
     "pulseaudio": {
         "format": "{icon}  {volume}%",
