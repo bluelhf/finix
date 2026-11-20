@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
-Date: Tue, 3 Nov 2026 18:00:00 +0000
+Date: Fri, 20 Nov 2026 15:30:00 +0200
 Subject: [PATCH] fix: alt+tab switcher closes reliably on fast taps
 
 Hyprland 0.57 never delivers the `ALT + Alt_L` release binds, so the switcher
@@ -12,31 +12,25 @@ only closed on Esc.
 - Don't make the open binds repeating, so holding tab after releasing alt does
   not reopen the switcher.
 
-Applies on top of hyprshell-hyprland-0.57-compat.patch. Not compiled or tested.
+Rebased onto hyprshell 4.10.9, which already contains the Hyprland 0.57
+workspace-address support, so hyprshell-hyprland-0.57-compat.patch is no
+longer needed. Not compiled or tested.
 ---
 diff --git a/crates/exec-lib/src/binds.rs b/crates/exec-lib/src/binds.rs
-index 9bc3d67..b4aff97 100644
+index 8a54fc9..a46ffb4 100644
 --- a/crates/exec-lib/src/binds.rs
 +++ b/crates/exec-lib/src/binds.rs
-@@ -98,7 +98,6 @@ pub fn apply_exec_bind_lua(bind: &ExecBind) -> anyhow::Result<()> {
-         } else {
-             vec![
-                 Flag::AutoConsuming,
--                Flag::Repeating,
-                 Flag::Description(bind.desc.clone()),
-             ]
-         },
-@@ -131,7 +130,7 @@ pub fn apply_exec_bind_legacy(bind: &ExecBind) -> anyhow::Result<()> {
-         flags: if bind.release {
-             &[binds::Flag::r, binds::Flag::t]
-         } else {
--            &[binds::Flag::e]
-+            &[]
-         },
-         dispatcher: DispatchType::Exec(&bind.exec),
-     };
+@@ -59,8 +59,6 @@ pub fn apply_exec_bind(bind: &ExecBind) -> anyhow::Result<()> {
+             let mut flags = vec![Flag::AutoConsuming, Flag::Description(desc)];
+             if bind.release {
+                 flags.push(Flag::Release);
+-            } else {
+-                flags.push(Flag::Repeating);
+             }
+             if bind.transparent {
+                 flags.push(Flag::Transparent);
 diff --git a/crates/windows-lib/src/switch/root.rs b/crates/windows-lib/src/switch/root.rs
-index c5cc06e..e8828eb 100644
+index 350e84c..b9db6d6 100644
 --- a/crates/windows-lib/src/switch/root.rs
 +++ b/crates/windows-lib/src/switch/root.rs
 @@ -18,6 +18,21 @@ use tracing::{debug, error, trace};
@@ -90,7 +84,7 @@ index c5cc06e..e8828eb 100644
                  if let Some(controller) = self.controller.take() {
                      self.window.remove_controller(&controller);
                  }
-@@ -215,6 +245,28 @@ impl SwitchRoot {
+@@ -215,6 +245,30 @@ impl SwitchRoot {
          }
      }
  
@@ -110,7 +104,9 @@ index c5cc06e..e8828eb 100644
 +                return ControlFlow::Continue;
 +            }
 +            if !modifier_held(modifier) {
-+                sender.input_sender().emit(SwitchRootInput::CloseSwitch(true));
++                sender
++                    .input_sender()
++                    .emit(SwitchRootInput::CloseSwitch(true));
 +            }
 +            ControlFlow::Break
 +        });
