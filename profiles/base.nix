@@ -3,7 +3,6 @@
 {
   imports = with modules; [
     sysklogd
-    sudo
     polkit
     bash
   ];
@@ -11,7 +10,6 @@
   finit.runlevel = 3;
 
   programs = {
-    sudo.enable = true;
     bash.enable = true;
   };
 

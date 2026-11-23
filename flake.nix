@@ -46,6 +46,7 @@
             ./contract/secrets.nix
             ./contract/network.nix
             ./contract/seat.nix
+            ./contract/privilege.nix
             dir
           ];
         };

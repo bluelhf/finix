@@ -10,6 +10,7 @@
     ../../profiles/base.nix
     ../../profiles/nix.nix
     ../../profiles/boot.nix
+    ../../providers/privilege/sudo.nix
     ../../providers/secrets/age.nix
     ../../providers/network/networkmanager.nix
     ../../profiles/console.nix
