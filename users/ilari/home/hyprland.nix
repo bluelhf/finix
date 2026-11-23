@@ -8,6 +8,7 @@ let
   bar = config.local.apps.bar;
   layout = builtins.toJSON osConfig.local.keyboardLayout;
   audio = lib.attrByPath [ "programs" "wireplumber" "enable" ] false osConfig;
+  networkmanager = lib.attrByPath [ "services" "networkmanager" "enable" ] false osConfig;
   wpctl = "${osConfig.programs.wireplumber.package}/bin/wpctl";
 in
 {
@@ -90,6 +91,10 @@ in
           ''hl.exec_cmd(${builtins.toJSON wallpaper})''}
         ${lib.optionalString (bar != null)
           ''hl.exec_cmd(${builtins.toJSON bar})''}
+        ${lib.optionalString networkmanager ''
+          -- NetworkManager secret agent (needed for VPN WebAuth/SSO dialogs) + tray indicator
+          hl.exec_cmd(${builtins.toJSON "${lib.getExe pkgs.networkmanagerapplet} --indicator"})
+        ''}
       end)
 
       hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
