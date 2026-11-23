@@ -123,7 +123,6 @@ in
 {
   imports = [
     modules.networkmanager
-    ../../profiles/secrets.nix
   ];
 
   options.local.network.backend = lib.mkOption {

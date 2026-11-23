@@ -5,7 +5,6 @@
     modules.fish
     inputs.community-modules.nixosModules.home-manager
     ./wifi.nix
-    ../../profiles/secrets.nix
   ];
 
   programs.fish.enable = true;

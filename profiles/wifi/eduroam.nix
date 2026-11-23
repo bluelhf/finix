@@ -3,7 +3,6 @@
 {
   imports = [
     ./identities.nix
-    ../secrets.nix
   ];
 
   local.secrets.files.wifi-eduroam.file = ../../secrets/wifi-eduroam.age;

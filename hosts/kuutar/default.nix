@@ -10,6 +10,7 @@
     ../../profiles/base.nix
     ../../profiles/nix.nix
     ../../profiles/boot.nix
+    ../../providers/secrets/age.nix
     ../../providers/network/networkmanager.nix
     ../../profiles/wifi/eduroam.nix
     ../../profiles/wifi/aalto.nix
