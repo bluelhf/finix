@@ -13,6 +13,7 @@
     ../../profiles/network.nix
     ../../profiles/wifi/eduroam.nix
     ../../profiles/wifi/aalto.nix
+    ../../profiles/vpn/aalto.nix
     ../../profiles/bluetooth.nix
     ../../profiles/audio.nix
     ../../profiles/console.nix
