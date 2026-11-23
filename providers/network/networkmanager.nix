@@ -142,6 +142,8 @@ in
         vpnAnyconnect = true;
       };
 
+      local.grants.groups.network = [ "networkmanager" ];
+
       services.networkmanager = {
         enable = lib.mkDefault true;
         settings.logging.backend = lib.mkDefault "syslog";

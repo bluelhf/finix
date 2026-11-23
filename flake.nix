@@ -42,6 +42,7 @@
             { nixpkgs.pkgs = pkgs; }
             ./contract/capabilities.nix
             ./contract/system.nix
+            ./contract/grants.nix
             ./contract/secrets.nix
             ./contract/network.nix
             ./contract/seat.nix

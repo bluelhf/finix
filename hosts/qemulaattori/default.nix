@@ -29,10 +29,11 @@
   time.timeZone = "Europe/Helsinki";
   local.keyboardLayout = "fi";
 
-  users.users.ilari.extraGroups = [
-    "wheel"
-    "video"
+  local.grants.users.ilari = [
+    "admin"
+    "graphics"
+    "seat"
     "input"
-    "networkmanager"
+    "network"
   ];
 }

@@ -2,6 +2,7 @@
 
 {
   users.groups.plugdev = { };
+  local.grants.groups.sdr = [ "plugdev" ];
 
   services.udev.packages = lib.singleton (
     pkgs.writeTextFile {

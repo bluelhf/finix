@@ -36,10 +36,12 @@
   time.timeZone = "Europe/Helsinki";
   local.keyboardLayout = "fi";
 
-  users.users.ilari.extraGroups = [
-    "wheel"
-    "video" "seat" "input"
-    "networkmanager"
-    "plugdev"
+  local.grants.users.ilari = [
+    "admin"
+    "graphics"
+    "seat"
+    "input"
+    "network"
+    "sdr"
   ];
 }

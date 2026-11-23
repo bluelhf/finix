@@ -17,6 +17,8 @@ in
 
     (lib.mkIf (cfg.backend == "seatd") {
       local.seat.supportedFeatures.uaccess = true;
+      local.grants.groups.seat = [ "seat" ];
+
       local.capabilities = {
         required = [
           "session-manager"
