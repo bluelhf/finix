@@ -26,6 +26,7 @@
                 "webstorm"
                 "rust-rover"
                 "claude-code"
+                "agy-cli"
               ];
           };
         in
