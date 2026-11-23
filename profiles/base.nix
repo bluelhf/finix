@@ -1,4 +1,4 @@
-{ modules, pkgs, ... }:
+{ config, modules, ... }:
 
 {
   imports = with modules; [
@@ -21,5 +21,22 @@
     dbus.enable = true;
     udev.enable = true;
     sessiond.enable = true;
+  };
+
+  local.capabilities = {
+    exclusive = [
+      "device-manager"
+      "session-manager"
+    ];
+    providers = {
+      udev = {
+        enable = config.services.udev.enable;
+        provides = [ "device-manager" ];
+      };
+      sessiond = {
+        enable = config.services.sessiond.enable;
+        provides = [ "session-manager" ];
+      };
+    };
   };
 }

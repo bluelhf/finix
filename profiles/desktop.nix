@@ -3,13 +3,11 @@
 {
   imports = [
     modules.hyprland
-    modules.sessiond-uaccess
   ];
 
-  programs.hyprland.enable = true;
+  local.capabilities.required = [ "seat-manager" ];
 
-  services.seatd.enable = true;
-  services.sessiond-uaccess.enable = true;
+  programs.hyprland.enable = true;
 
   hardware.graphics.enable = true;
 

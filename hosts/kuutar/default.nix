@@ -19,6 +19,7 @@
     ../../profiles/audio.nix
     ../../profiles/console.nix
     ../../profiles/fonts.nix
+    ../../providers/seat/seatd.nix
     ../../profiles/desktop.nix
     ../../profiles/theme.nix
     ../../profiles/power.nix
