@@ -13,6 +13,7 @@
     ../../providers/privilege/sudo.nix
     ../../providers/secrets/age.nix
     ../../providers/network/networkmanager.nix
+    ../../providers/login-session/sessiond-hooks.nix
     ../../profiles/wifi/eduroam.nix
     ../../profiles/wifi/aalto.nix
     ../../profiles/vpn/aalto.nix

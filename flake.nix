@@ -45,6 +45,7 @@
             ./contract/grants.nix
             ./contract/secrets.nix
             ./contract/network.nix
+            ./contract/login-session.nix
             ./contract/seat.nix
             ./contract/privilege.nix
             dir
