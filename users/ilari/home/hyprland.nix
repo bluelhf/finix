@@ -1,4 +1,4 @@
-{ config, lib, pkgs, osConfig, ... }:
+{ config, lib, osConfig, ... }:
 
 let
   terminal = config.local.apps.terminal;
@@ -10,6 +10,8 @@ let
 in
 {
   local.displaySession.exportedVariables = [ "HYPRLAND_INSTANCE_SIGNATURE" ];
+  local.compositor.exitCommand =
+    "${lib.getExe' osConfig.programs.hyprland.package "hyprctl"} dispatch 'hl.dsp.exit()'";
 
   wayland.windowManager.hyprland = {
     enable = true;
@@ -86,7 +88,6 @@ in
       hl.on("hyprland.start", function()
         ${lib.optionalString (config.local.displaySession.startCommand != null)
           ''hl.exec_cmd(${builtins.toJSON config.local.displaySession.startCommand})''}
-        hl.exec_cmd("${lib.getExe (pkgs.callPackage ../../../packages/hyprshell.nix { })} run")
       end)
 
       hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })

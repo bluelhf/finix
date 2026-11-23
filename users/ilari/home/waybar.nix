@@ -7,14 +7,14 @@ let
   networkCmds = lib.attrByPath [ "local" "network" "commands" ] { } osConfig;
 
   commands = {
-    "@launcher@" = toString config.local.apps.launcher;
+    "@launcher@" = toString (config.local.apps.launcher or "");
     "@brightnessctl@" = lib.getExe pkgs.brightnessctl;
     "@blueman-manager@" = lib.getExe' pkgs.blueman "blueman-manager";
     "@rfkill@" = lib.getExe' pkgs.util-linux "rfkill";
     "@audio-mixer@" = toString (audioCmds.mixer or "");
     "@audio-toggle-mute@" = toString (audioCmds.toggleMute or "");
     "@network-editor@" = toString (networkCmds.connectionEditor or "");
-    "@hyprctl@" = lib.getExe' osConfig.programs.hyprland.package "hyprctl";
+    "@compositor-exit@" = toString (config.local.compositor.exitCommand or "");
   };
 in
 {

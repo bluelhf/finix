@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 {
   programs.firefox = {
@@ -14,4 +14,6 @@
       "x-scheme-handler/https" = "firefox-devedition.desktop";
     };
   };
+
+  local.apps.browser = lib.getExe config.programs.firefox.package;
 }
