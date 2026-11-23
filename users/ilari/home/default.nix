@@ -1,4 +1,4 @@
-{ osConfig, ... }:
+{ lib, osConfig, ... }:
 
 {
   imports = [
@@ -6,7 +6,7 @@
     ../../../contract/display-session.nix
     ../../../contract/home.nix
 
-    ./display-session-flock.nix
+    ../../../providers/display-session/flock.nix
     ./shell.nix
     ./terminal.nix
     ./browser.nix
@@ -30,5 +30,6 @@
 
   xdg.enable = true;
 
-  local.capabilities.required = osConfig.local.session.requiredCapabilities;
+  local.capabilities.required =
+    lib.attrByPath [ "local" "session" "requiredCapabilities" ] [ ] osConfig;
 }
