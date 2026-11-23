@@ -14,5 +14,11 @@
       default = false;
       description = "true if the host's display doesn't have a hardware cursor";
     };
+
+    session.requiredCapabilities = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Capabilities that interactive user sessions on this host must provide";
+    };
   };
 }
