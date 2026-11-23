@@ -18,7 +18,7 @@
     ../../providers/seat/seatd.nix
     ../../profiles/desktop.nix
     ../../profiles/theme.nix
-    ../../profiles/greeter.nix
+    ../../providers/greeter/greetd.nix
     ../../profiles/keyring.nix
     ../../profiles/tools.nix
 

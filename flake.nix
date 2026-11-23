@@ -47,6 +47,7 @@
             ./contract/network.nix
             ./contract/login-session.nix
             ./contract/audio.nix
+            ./contract/greeter.nix
             ./contract/seat.nix
             ./contract/privilege.nix
             dir

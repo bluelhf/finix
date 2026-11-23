@@ -1,4 +1,4 @@
-{ lib, pkgs, modules, ... }:
+{ pkgs, modules, ... }:
 
 let
   pam = "${pkgs.gnome-keyring}/lib/security/pam_gnome_keyring.so";
@@ -8,11 +8,11 @@ in
 
   programs.gnome-keyring.enable = true;
 
-  security.pam.services.greetd.text = lib.mkMerge [
-    (lib.mkBefore ''
+  local.greeter = {
+    pamAuthBefore = ''
       auth optional pam_unix.so likeauth nullok
       auth optional ${pam}
-    '')
-    (lib.mkAfter "session optional ${pam} auto_start\n")
-  ];
+    '';
+    pamSessionAfter = "session optional ${pam} auto_start";
+  };
 }
