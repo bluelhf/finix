@@ -41,6 +41,7 @@
           modules = [
             { nixpkgs.pkgs = pkgs; }
             ./contract/system.nix
+            ./contract/network.nix
             dir
           ];
         };
