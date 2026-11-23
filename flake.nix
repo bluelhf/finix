@@ -51,6 +51,7 @@
             ./contract/seat.nix
             ./contract/power.nix
             ./contract/privilege.nix
+            ./contract/boot.nix
             dir
           ];
         };

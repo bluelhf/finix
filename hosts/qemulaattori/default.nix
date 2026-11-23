@@ -1,24 +1,24 @@
-{ config, ... }:
-
 {
   imports = [
     # hardware
     ./hardware.nix
     ../../hardware/qemu-guest.nix
 
-    # host profile
-    ../../profiles/base.nix
-    ../../profiles/nix.nix
-    ../../profiles/boot.nix
+    # providers
+    ../../providers/boot/limine.nix
     ../../providers/privilege/sudo.nix
     ../../providers/secrets/age.nix
     ../../providers/network/networkmanager.nix
+    ../../providers/seat/seatd.nix
+    ../../providers/greeter/greetd.nix
+
+    # host profile
+    ../../profiles/base.nix
+    ../../profiles/nix.nix
     ../../profiles/console.nix
     ../../profiles/fonts.nix
-    ../../providers/seat/seatd.nix
     ../../profiles/desktop.nix
     ../../profiles/theme.nix
-    ../../providers/greeter/greetd.nix
     ../../profiles/keyring.nix
     ../../profiles/tools.nix
 
