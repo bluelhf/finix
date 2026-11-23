@@ -49,6 +49,7 @@
             ./contract/audio.nix
             ./contract/greeter.nix
             ./contract/seat.nix
+            ./contract/power.nix
             ./contract/privilege.nix
             dir
           ];

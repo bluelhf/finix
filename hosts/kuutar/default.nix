@@ -24,7 +24,7 @@
     ../../providers/seat/seatd.nix
     ../../profiles/desktop.nix
     ../../profiles/theme.nix
-    ../../profiles/power.nix
+    ../../providers/power/zzz.nix
     ../../providers/greeter/greetd.nix
     ../../profiles/keyring.nix
     ../../profiles/tools.nix
