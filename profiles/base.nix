@@ -5,6 +5,7 @@
     sysklogd
     polkit
     bash
+    sessiond-power
   ];
 
   finit.runlevel = 3;
@@ -19,6 +20,7 @@
     dbus.enable = true;
     udev.enable = true;
     sessiond.enable = true;
+    sessiond-power.enable = true;
   };
 
   local.capabilities = {
