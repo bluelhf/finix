@@ -1,5 +1,3 @@
-# setup taken from https://github.com/langsjo/nixos-config/blob/main/modules/networking/nm-profiles/aalto-vpn.nix
-# (originally from https://github.com/z10n-dev/nixos-anyconnect-webauth/blob/main/vpn.nix)
 { config, pkgs, ... }:
 
 let
