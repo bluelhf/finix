@@ -24,5 +24,16 @@ in
       (builtins.readFile ./waybar/config.jsonc);
   xdg.configFile."waybar/style.css".source = ./waybar/style.css;
 
-  local.apps.bar = lib.getExe waybar;
+  local.displaySession.services.waybar = {
+    enable = lib.mkDefault true;
+    command = lib.getExe waybar;
+  };
+
+  local.capabilities = {
+    exclusive = [ "status-bar" ];
+    providers.waybar = {
+      enable = config.local.displaySession.services.waybar.enable;
+      provides = [ "status-bar" ];
+    };
+  };
 }

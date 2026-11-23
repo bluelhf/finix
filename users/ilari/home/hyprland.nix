@@ -4,14 +4,13 @@ let
   terminal = config.local.apps.terminal;
   launcher = config.local.apps.launcher;
   screenshot = config.local.apps.screenshot;
-  wallpaper = config.local.apps.wallpaper;
-  bar = config.local.apps.bar;
   layout = builtins.toJSON osConfig.local.keyboardLayout;
   audio = lib.attrByPath [ "programs" "wireplumber" "enable" ] false osConfig;
-  networkmanager = lib.attrByPath [ "services" "networkmanager" "enable" ] false osConfig;
   wpctl = "${osConfig.programs.wireplumber.package}/bin/wpctl";
 in
 {
+  local.displaySession.exportedVariables = [ "HYPRLAND_INSTANCE_SIGNATURE" ];
+
   wayland.windowManager.hyprland = {
     enable = true;
     package = null;
@@ -85,16 +84,9 @@ in
       ''}
 
       hl.on("hyprland.start", function()
-        hl.exec_cmd("${pkgs.dbus}/bin/dbus-update-activation-environment GSETTINGS_BACKEND WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE")
+        ${lib.optionalString (config.local.displaySession.startCommand != null)
+          ''hl.exec_cmd(${builtins.toJSON config.local.displaySession.startCommand})''}
         hl.exec_cmd("${lib.getExe (pkgs.callPackage ../../../packages/hyprshell.nix { })} run")
-        ${lib.optionalString (wallpaper != null)
-          ''hl.exec_cmd(${builtins.toJSON wallpaper})''}
-        ${lib.optionalString (bar != null)
-          ''hl.exec_cmd(${builtins.toJSON bar})''}
-        ${lib.optionalString networkmanager ''
-          -- NetworkManager secret agent (needed for VPN WebAuth/SSO dialogs) + tray indicator
-          hl.exec_cmd(${builtins.toJSON "${lib.getExe pkgs.networkmanagerapplet} --indicator"})
-        ''}
       end)
 
       hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })

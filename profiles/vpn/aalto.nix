@@ -19,6 +19,8 @@ in
     group = "nm-openconnect";
   };
 
+  local.session.requiredCapabilities = [ "nm-secret-agent" ];
+
   local.networkmanager = {
     plugins = [ pkgs.networkmanager-openconnect ];
 
