@@ -10,7 +10,7 @@
     ../../profiles/base.nix
     ../../profiles/nix.nix
     ../../profiles/boot.nix
-    ../../profiles/network.nix
+    ../../providers/network/networkmanager.nix
     ../../profiles/console.nix
     ../../profiles/fonts.nix
     ../../profiles/desktop.nix
