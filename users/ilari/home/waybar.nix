@@ -4,6 +4,7 @@ let
   waybar = pkgs.callPackage ../../../packages/waybar.nix { };
 
   audioCmds = lib.attrByPath [ "local" "audio" "commands" ] { } osConfig;
+  networkCmds = lib.attrByPath [ "local" "network" "commands" ] { } osConfig;
 
   commands = {
     "@launcher@" = toString config.local.apps.launcher;
@@ -12,7 +13,7 @@ let
     "@rfkill@" = lib.getExe' pkgs.util-linux "rfkill";
     "@audio-mixer@" = toString (audioCmds.mixer or "");
     "@audio-toggle-mute@" = toString (audioCmds.toggleMute or "");
-    "@nm-connection-editor@" = lib.getExe' pkgs.networkmanagerapplet "nm-connection-editor";
+    "@network-editor@" = toString (networkCmds.connectionEditor or "");
     "@hyprctl@" = lib.getExe' osConfig.programs.hyprland.package "hyprctl";
   };
 in

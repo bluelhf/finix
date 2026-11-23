@@ -147,7 +147,7 @@
         "format-alt": "󰜮  {bandwidthDownBits}  󰜷  {bandwidthUpBits}",
         "tooltip-format": "{essid}\nInterface: {ifname}\nIP: {ipaddr}/{cidr}\nSignal: {signalStrength}%",
         "interval": 5,
-        "on-click-right": "@nm-connection-editor@"
+        "on-click-right": "@network-editor@"
     },
     "cpu": {
         "format": "󰍛  {usage}%",

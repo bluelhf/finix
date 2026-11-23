@@ -135,11 +135,16 @@ in
     }
 
     (lib.mkIf (cfg.backend == "networkmanager") {
-      local.network.supportedFeatures = {
-        wifiOpen = true;
-        wifiPsk = true;
-        wifiEap = true;
-        vpnAnyconnect = true;
+      local.network = {
+        supportedFeatures = {
+          wifiOpen = true;
+          wifiPsk = true;
+          wifiEap = true;
+          vpnAnyconnect = true;
+        };
+        commands.connectionEditor = lib.mkDefault (
+          lib.getExe' pkgs.networkmanagerapplet "nm-connection-editor"
+        );
       };
 
       local.grants.groups.network = [ "networkmanager" ];

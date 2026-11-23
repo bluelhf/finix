@@ -1,10 +1,6 @@
 { config, ... }:
 
 {
-  imports = [
-    ./identities.nix
-  ];
-
   local.secrets.files.wifi-aalto.file = ../../secrets/wifi-aalto.age;
 
   local.network.wifi.aalto = {
@@ -14,7 +10,7 @@
     security.eap = {
       method = "peap";
       phase2Auth = "mschapv2";
-      identity = config.local.wifi.identities.aalto;
+      identity = config.local.network.identities.aalto;
       caCert = ./harica-tls-ecc-root-2021.pem;
       domainMatch = "radius.org.aalto.fi";
       passwordSecret = "wifi-aalto";

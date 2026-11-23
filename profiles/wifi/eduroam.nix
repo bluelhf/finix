@@ -1,10 +1,6 @@
 { config, ... }:
 
 {
-  imports = [
-    ./identities.nix
-  ];
-
   local.secrets.files.wifi-eduroam.file = ../../secrets/wifi-eduroam.age;
 
   local.network.wifi.eduroam = {
@@ -14,7 +10,7 @@
     security.eap = {
       method = "peap";
       phase2Auth = "mschapv2";
-      identity = config.local.wifi.identities.eduroam;
+      identity = config.local.network.identities.eduroam;
       caCert = ./harica-tls-ecc-root-2021.pem;
       domainMatch = "radius.org.aalto.fi";
       passwordSecret = "wifi-eduroam";

@@ -186,6 +186,21 @@ in
       default = { };
       description = "Declarative VPN connection profiles";
     };
+
+    identities = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      example.eduroam = "username@aalto.fi";
+      description = "Per-network authentication identity (e.g. EAP username), supplied by principal scope";
+    };
+
+    commands = {
+      connectionEditor = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Interactive network connection editor command provided by the active backend";
+      };
+    };
   };
 
   config.assertions = [
