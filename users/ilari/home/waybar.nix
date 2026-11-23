@@ -3,15 +3,15 @@
 let
   waybar = pkgs.callPackage ../../../packages/waybar.nix { };
 
-  audio = lib.attrByPath [ "programs" "wireplumber" "enable" ] false osConfig;
+  audioCmds = lib.attrByPath [ "local" "audio" "commands" ] { } osConfig;
 
   commands = {
     "@launcher@" = toString config.local.apps.launcher;
     "@brightnessctl@" = lib.getExe pkgs.brightnessctl;
     "@blueman-manager@" = lib.getExe' pkgs.blueman "blueman-manager";
     "@rfkill@" = lib.getExe' pkgs.util-linux "rfkill";
-    "@pavucontrol@" = lib.getExe pkgs.pavucontrol;
-    "@wpctl@" = lib.optionalString audio "${osConfig.programs.wireplumber.package}/bin/wpctl";
+    "@audio-mixer@" = toString (audioCmds.mixer or "");
+    "@audio-toggle-mute@" = toString (audioCmds.toggleMute or "");
     "@nm-connection-editor@" = lib.getExe' pkgs.networkmanagerapplet "nm-connection-editor";
     "@hyprctl@" = lib.getExe' osConfig.programs.hyprland.package "hyprctl";
   };

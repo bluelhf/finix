@@ -18,7 +18,7 @@
     ../../profiles/wifi/aalto.nix
     ../../profiles/vpn/aalto.nix
     ../../profiles/bluetooth.nix
-    ../../profiles/audio.nix
+    ../../providers/audio/pipewire.nix
     ../../profiles/console.nix
     ../../profiles/fonts.nix
     ../../providers/seat/seatd.nix

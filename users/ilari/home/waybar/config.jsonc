@@ -136,8 +136,8 @@
             ]
         },
         "scroll-step": 5,
-        "on-click": "@pavucontrol@",
-        "on-click-right": "@wpctl@ set-mute @DEFAULT_AUDIO_SINK@ toggle",
+        "on-click": "@audio-mixer@",
+        "on-click-right": "@audio-toggle-mute@",
         "tooltip-format": "{desc}"
     },
     "network": {
